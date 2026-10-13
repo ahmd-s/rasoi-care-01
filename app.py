@@ -26,6 +26,7 @@ from threading import Lock
 import jwt
 from flask import Flask, request, jsonify, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
+import database
 from database import get_db, init_db, next_id, now, new_uuid_id
 
 # ---------------------------------------------------------------- worker mode
@@ -958,6 +959,37 @@ def cors_preflight(_any):
 # have never bootstrapped through the Partner app, which is expected.
 BOOKING_SELECT = (
     "SELECT bookings.*, technicians.firebase_uid AS technician_firebase_uid, "
+    "users.phone AS customer_phone "
+    "FROM bookings LEFT JOIN technicians ON technicians.id = bookings.technician_id "
+    "LEFT JOIN users ON users.id = bookings.user_id"
+)
+
+# List-query twin of BOOKING_SELECT (same joins, same calling convention)
+# that never transports the raw base64 photo/signature blobs. A booking can
+# carry up to ~12MB + ~12MB + ~4MB of base64 text; a staff list of 500 rows
+# was dragging hundreds of MB through Postgres and serialization only for
+# booking_row_to_dict to immediately discard it (it serializes those columns
+# as booleans anyway — `bool(row[...])`). The projection selects every
+# bookings column EXCEPT the three blobs, which are aliased to an exactly
+# truthiness-equivalent boolean expression under the same column name, so
+# booking_row_to_dict's `"col" in keys and bool(row[col])` logic produces
+# byte-identical JSON with a payload three orders of magnitude smaller.
+# Call sites: every .fetchall() list/report query. Single-row .fetchone()
+# detail/mutation paths keep using BOOKING_SELECT (full row) unchanged.
+# Column source of truth: database.BOOKINGS_COLUMNS (drift-guarded by
+# tests/test_booking_list_payload.py).
+_BOOKING_LIST_SCALARS = [
+    c for c in database.BOOKINGS_COLUMNS if c not in database.BOOKINGS_BLOB_COLUMNS
+]
+_BOOKING_LIST_BLOB_ALIASES = [
+    f"(bookings.{c} IS NOT NULL AND length(bookings.{c}) > 0) AS {c}"
+    for c in database.BOOKINGS_BLOB_COLUMNS
+]
+BOOKING_LIST_SELECT = (
+    "SELECT "
+    + ", ".join(f"bookings.{c}" for c in _BOOKING_LIST_SCALARS)
+    + ", " + ", ".join(_BOOKING_LIST_BLOB_ALIASES)
+    + ", technicians.firebase_uid AS technician_firebase_uid, "
     "users.phone AS customer_phone "
     "FROM bookings LEFT JOIN technicians ON technicians.id = bookings.technician_id "
     "LEFT JOIN users ON users.id = bookings.user_id"
@@ -2322,12 +2354,14 @@ def list_bookings():
     conn = get_db()
     if user:
         rows = conn.execute(
-            BOOKING_SELECT + " WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)
+            BOOKING_LIST_SELECT + " WHERE bookings.user_id = ? ORDER BY bookings.created_at DESC",
+            (user["id"],),
         ).fetchall()
     else:
         limit, offset = _pagination_args()
         rows = conn.execute(
-            BOOKING_SELECT + " ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
+            BOOKING_LIST_SELECT + " ORDER BY bookings.created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
     parts_by_booking = fetch_booking_parts_bulk(conn, [r["id"] for r in rows])
     service_changes_by_booking = fetch_booking_service_changes_bulk(conn, [r["id"] for r in rows])
@@ -2748,7 +2782,7 @@ def technician_available_bookings():
     my_categories = technician_categories(tech)
     conn = get_db()
     rows = conn.execute(
-        BOOKING_SELECT + " WHERE bookings.technician_id IS NULL AND bookings.status = 'Requested' "
+        BOOKING_LIST_SELECT + " WHERE bookings.technician_id IS NULL AND bookings.status = 'Requested' "
         "ORDER BY bookings.created_at ASC"
     ).fetchall()
     conn.close()
@@ -4022,7 +4056,7 @@ def technician_my_bookings():
     supplied id (so one technician can't read another's job list)."""
     conn = get_db()
     rows = conn.execute(
-        BOOKING_SELECT + " WHERE technician_id = ? ORDER BY created_at DESC",
+        BOOKING_LIST_SELECT + " WHERE bookings.technician_id = ? ORDER BY bookings.created_at DESC",
         (request.technician["id"],),
     ).fetchall()
     parts_by_booking = fetch_booking_parts_bulk(conn, [r["id"] for r in rows])
@@ -4359,7 +4393,8 @@ def stats_reports():
     # users join, unrelated to the district filter added here.
     if area:
         bookings = conn.execute(
-            BOOKING_SELECT + " WHERE bookings.created_at >= ? AND bookings.area = ? ORDER BY created_at",
+            BOOKING_LIST_SELECT + " WHERE bookings.created_at >= ? AND bookings.area = ? "
+            "ORDER BY bookings.created_at",
             (cutoff, area),
         ).fetchall()
         complaints = conn.execute(
@@ -4370,7 +4405,8 @@ def stats_reports():
         technicians = conn.execute("SELECT * FROM technicians WHERE area = ?", (area,)).fetchall()
     else:
         bookings = conn.execute(
-            BOOKING_SELECT + " WHERE bookings.created_at >= ? ORDER BY created_at", (cutoff,)
+            BOOKING_LIST_SELECT + " WHERE bookings.created_at >= ? ORDER BY bookings.created_at",
+            (cutoff,),
         ).fetchall()
         complaints = conn.execute(
             "SELECT * FROM complaints WHERE created_at >= ?", (cutoff,)

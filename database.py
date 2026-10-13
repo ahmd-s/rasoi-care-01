@@ -29,6 +29,32 @@ from datetime import datetime, timezone
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rasoicare.db")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# Every column the bookings table ends up with after SCHEMA plus the
+# migrate_* functions below — the single source of truth app.py uses to
+# build its blob-free list projection (BOOKING_LIST_SELECT). If you add a
+# bookings column (i.e. another `ALTER TABLE bookings ADD COLUMN` branch in
+# migrate_bookings_columns), add it here too: tests/test_booking_list_payload.py
+# asserts this tuple against the real schema on every test run, so a missed
+# entry fails CI instead of silently degrading list payloads.
+BOOKINGS_COLUMNS = (
+    # from SCHEMA
+    "id", "category", "service", "price", "technician_id", "customer_name",
+    "status", "bachat_slot", "service_rating", "tech_rating", "area",
+    "created_at", "updated_at",
+    # added by migrate_bookings_columns
+    "user_id", "service_id", "total_amount", "lat", "lng", "in_progress_at",
+    "suction_before", "suction_after", "time_on_site_min", "cancelled_at",
+    "cancellation_fee", "directions", "notes", "issues_json", "payment_method",
+    "start_code", "before_photo_b64", "after_photo_b64", "signature_b64",
+    "scheduled_at", "address_line", "brand", "model_number", "city",
+)
+
+# The base64 job-photo/signature columns — up to 12MB (photos) / 4MB
+# (signature) of text each. List endpoints must never SELECT these raw;
+# app.py's BOOKING_LIST_SELECT aliases them to tiny boolean expressions
+# instead, while detail/audit paths keep fetching the real bytes.
+BOOKINGS_BLOB_COLUMNS = ("before_photo_b64", "after_photo_b64", "signature_b64")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS technicians (
     id                    TEXT PRIMARY KEY,
