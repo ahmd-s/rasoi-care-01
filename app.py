@@ -641,34 +641,54 @@ def validate_json(schema):
     return decorator
 
 
+# Legacy surface control (P1-14 / audit N11): these six HTML consoles are the
+# pre-Flutter web apps. They're still served because the rasoi_web_* WebView
+# stub APKs load /customer and /technician from this backend (rasoi_web_*/
+# lib/main.dart kAppPath), so turning them off is a deliberate owner decision
+# paired with retiring those stubs — not something a deploy should do by
+# accident. ENABLE_LEGACY_WEB=0 turns them all into JSON 404s; the legal
+# pages (/terms, /privacy) and every /api route are NOT part of this surface
+# and stay up regardless.
+_ENABLE_LEGACY_WEB = (os.environ.get("ENABLE_LEGACY_WEB", "1") != "0")
+
+
+def _legacy_page(filename):
+    if not _ENABLE_LEGACY_WEB:
+        return jsonify({
+            "error": "Not Found",
+            "message": "Legacy web console disabled (ENABLE_LEGACY_WEB=0)",
+        }), 404
+    return send_from_directory(FRONTEND_DIR, filename)
+
+
 @app.route("/")
 def index():
-    return send_from_directory(FRONTEND_DIR, "index.html")
+    return _legacy_page("index.html")
 
 
 @app.route("/customer")
 def customer_app():
-    return send_from_directory(FRONTEND_DIR, "customer.html")
+    return _legacy_page("customer.html")
 
 
 @app.route("/technician")
 def technician_app():
-    return send_from_directory(FRONTEND_DIR, "technician.html")
+    return _legacy_page("technician.html")
 
 
 @app.route("/admin")
 def admin_app():
-    return send_from_directory(FRONTEND_DIR, "admin.html")
+    return _legacy_page("admin.html")
 
 
 @app.route("/smiler")
 def smiler_app():
-    return send_from_directory(FRONTEND_DIR, "smiler.html")
+    return _legacy_page("smiler.html")
 
 
 @app.route("/homeservices")
 def homeservices_app():
-    return send_from_directory(FRONTEND_DIR, "homeservices.html")
+    return _legacy_page("homeservices.html")
 
 
 # ---------------------------------------------------------------- legal docs

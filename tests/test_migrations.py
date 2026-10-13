@@ -6,7 +6,19 @@ schema, no errors, seed rows not duplicated. The Postgres twin of this
 file (test_migrations_postgres.py) covers the same guarantees against a
 real Postgres when TEST_DATABASE_URL is provided.
 """
+import os
+
+import pytest
+
 import database
+
+# These tests inspect SQLite internals (sqlite_master / PRAGMA table_info).
+# In Postgres mode (TEST_DATABASE_URL set) their subject matter is covered
+# by test_migrations_postgres.py instead.
+pytestmark = pytest.mark.skipif(
+    bool(os.environ.get("TEST_DATABASE_URL")),
+    reason="SQLite-only internals — Postgres equivalents live in test_migrations_postgres.py",
+)
 
 
 def test_double_init_db_is_clean_noop(client):

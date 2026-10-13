@@ -8,11 +8,42 @@ name: Build Android APKs
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch: {}
 
 jobs:
+  # Backend quality gate (P1-12) — runs BEFORE any APK is built or released:
+  # the full pytest suite plus a dependency vulnerability audit. If either
+  # fails, the build/release jobs never start, so a red backend can't ship
+  # silently inside new APKs.
+  backend-tests:
+    name: Backend tests & dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend requirements
+        run: pip install -r requirements-dev.txt
+
+      - name: Run backend test suite (SQLite mode)
+        # DATABASE_URL is never set on runners — explicit -u guarantees the
+        # suite can't accidentally touch a real database.
+        run: env -u DATABASE_URL python -m pytest -q
+
+      - name: Dependency vulnerability audit (pip-audit)
+        # resolves requirements.txt in an isolated env and checks every
+        # pinned/floor version against the OSV database; --strict fails on
+        # any finding (including unfixed ones, reported as errors)
+        run: pip-audit -r requirements.txt --strict
+
   build:
     name: Build ${{ matrix.app }}
+    needs: backend-tests
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -54,6 +85,7 @@ jobs:
   release:
     name: Publish APK release
     needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write

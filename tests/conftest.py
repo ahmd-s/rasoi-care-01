@@ -28,11 +28,47 @@ import pytest
 import database
 import app as app_module
 
+# P1-11 — Postgres-backed test mode. Set TEST_DATABASE_URL to a DISPOSABLE
+# Postgres database and the whole suite runs against real Postgres instead
+# of throwaway SQLite files (each test drops/recreates the schema, exactly
+# like the per-test SQLite file). Without the variable — the default — the
+# suite stays SQLite-only, offline, and green.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+
+
+def _drop_everything(conn):
+    conn.execute(
+        "DO $$ DECLARE r RECORD; BEGIN "
+        "FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = current_schema()) LOOP "
+        "EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE'; END LOOP; END $$;"
+    )
+    conn.commit()
+
 
 @pytest.fixture()
 def client(monkeypatch):
     """A Flask test client backed by a fresh, empty database for this
     one test — schema + catalog/staff seed data, nothing else."""
+    if TEST_DATABASE_URL:
+        # Postgres mode: never touch SQLite at all; the disposable database
+        # is wiped before AND after every test so tests stay independent.
+        monkeypatch.setattr(database, "DATABASE_URL", TEST_DATABASE_URL)
+        conn = database.get_db()
+        try:
+            _drop_everything(conn)
+        finally:
+            conn.close()
+        database.init_db()
+        app_module.app.testing = True
+        with app_module.app.test_client() as c:
+            yield c
+        conn = database.get_db()
+        try:
+            _drop_everything(conn)
+        finally:
+            conn.close()
+        return
+
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     monkeypatch.setattr(database, "DB_PATH", path)

@@ -140,6 +140,34 @@ One-time deployment runbook (owner action):
    automatic first-bootstrap owner role can only be claimed by those
    verified emails; everyone else bootstraps as plain staff.
 
+### Legacy web consoles (`ENABLE_LEGACY_WEB`)
+
+The six pre-Flutter HTML consoles (`/`, `/customer`, `/technician`,
+`/admin`, `/smiler`, `/homeservices`) are still served because the
+`rasoi_web_*` WebView APKs load `/customer` and `/technician` directly
+from this backend. They default to **on**; setting
+`ENABLE_LEGACY_WEB=0` turns all six into 404s (legal pages
+`/terms`/`/privacy` and every `/api` route stay up). Only flip it off as
+part of retiring the WebView stub apps — that's an owner decision.
+
+### Running the backend test suite
+
+```bash
+pip install -r requirements-dev.txt
+env -u DATABASE_URL python -m pytest -q          # SQLite mode (default)
+```
+
+Postgres mode (needs a **disposable** database — the suite drops and
+recreates the schema between tests; never point it at production data):
+
+```bash
+TEST_DATABASE_URL="postgresql://user:pass@host/db?sslmode=require" \
+  python -m pytest -q
+```
+
+CI runs the SQLite-mode suite plus `pip-audit -r requirements.txt
+--strict` before every APK build (see `.github/workflows/build-apks.yml`).
+
 ### Important: SQLite + free hosting tiers
 
 Free web-service tiers on Render/Railway typically use an **ephemeral
