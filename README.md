@@ -112,6 +112,34 @@ counters, and cancellation OTP codes live in this one process's memory;
 a second worker would split that state and silently disarm all of it.
 Scale out only after moving that state to a shared store (Redis/DB).
 
+### Owner/staff credentials (read before the first boot)
+
+The backend no longer ships a publicly-known owner login by default.
+On the first boot of a fresh database:
+
+- If `STAFF_SEED_OWNER_PIN` / `STAFF_SEED_STAFF_PIN` are both set, the
+  owner/staff accounts are seeded with exactly those PINs. Do this
+  **before** the first boot — seeding happens once and later changes to
+  the variables do not touch existing rows.
+- If they are not set, seeding is **refused** (logged loudly) and the
+  admin app has no PIN login until they are set — deliberately failing
+  safe rather than minting a credential that is public in this repo.
+  Firebase sign-in keeps working regardless.
+- `RASOI_ALLOW_DEFAULT_STAFF_PIN=1` is the dev/test-only escape hatch.
+  Never enable it on anything reachable outside a trusted network.
+
+One-time deployment runbook (owner action):
+
+1. After the first deploy, check the logs for the seeding decision line.
+2. Verify the staff table contains only accounts you expect (Admin
+   console → staff list, or `SELECT phone, role FROM staff;`).
+3. If a deployment was ever running the pre-hardening build, rotate: set
+   new PINs via the owner invite/reset flows (seeding env vars won't
+   rewrite existing rows).
+4. Optionally set `STAFF_BOOTSTRAP_OWNER_EMAILS` (comma-separated) so the
+   automatic first-bootstrap owner role can only be claimed by those
+   verified emails; everyone else bootstraps as plain staff.
+
 ### Important: SQLite + free hosting tiers
 
 Free web-service tiers on Render/Railway typically use an **ephemeral

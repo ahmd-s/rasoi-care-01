@@ -322,23 +322,35 @@ CUSTOMER_CATALOG_SEED = [
 
 from werkzeug.security import generate_password_hash
 
-# The demo owner/staff logins seed_staff() creates on first boot.
-# STAFF_SEED_OWNER_PIN/STAFF_SEED_STAFF_PIN let a real deployment set its
-# own PINs via environment config instead of shipping with the same
-# well-known "1234" every clone of this repo starts with — the phone
-# numbers and default PIN are public (they're right here in source
-# control), so anyone who hasn't rotated them has a fully-known owner
-# login. Set these before the first boot that creates the staff table;
-# seed_staff never touches an existing row, so changing them later has no
-# effect on an already-seeded deployment.
-_SEED_OWNER_PIN = os.environ.get("STAFF_SEED_OWNER_PIN", "1234")
-_SEED_STAFF_PIN = os.environ.get("STAFF_SEED_STAFF_PIN", "1234")
-
+# The owner/staff accounts seed_staff() creates on first boot.
+#
+# SECURITY MODEL (fixes audit N4 — "known owner credentials on default
+# deploys"): the seeded phone numbers and the built-in fallback PIN are
+# public — they live in this source file, which anyone can read. Shipping a
+# deployment whose owner login is a credential printed in the repo is
+# equivalent to having no owner login at all. Therefore:
+#
+#   * Set STAFF_SEED_OWNER_PIN / STAFF_SEED_STAFF_PIN (4+ digit codes of your
+#     choosing) BEFORE the first boot that creates the staff table. Seeding
+#     happens exactly once; changing these later does NOT touch rows that
+#     already exist (rotate via the admin invite/reset flows instead).
+#   * If either variable is missing on a fresh database, seed_staff REFUSES
+#     to seed and logs a loud warning instead — a deployment that meant to
+#     configure it fails safe (no owner login at all) rather than failing
+#     open (owner login everyone knows).
+#   * RASOI_ALLOW_DEFAULT_STAFF_PIN=1 is the explicit escape hatch for local
+#     development and the test suite only. Never set it on anything
+#     reachable outside a trusted network.
 STAFF_SEED = [
-    # (id, name, phone, pin, role)
-    ("staff_owner", "Priya Deshmukh", "9822000001", _SEED_OWNER_PIN, "owner"),
-    ("staff_ops", "Rahul Jadhav", "9822000002", _SEED_STAFF_PIN, "staff"),
+    # (id, name, phone, role) — PINs are resolved at seed time, not import
+    # time, so a deployment's env config is always what actually applies.
+    ("staff_owner", "Priya Deshmukh", "9822000001", "owner"),
+    ("staff_ops", "Rahul Jadhav", "9822000002", "staff"),
 ]
+
+# The well-known fallback PIN. Compared against by seed_staff's guard; the
+# VALUE IS NEVER LOGGED anywhere (logs must not contain credentials).
+_DEFAULT_STAFF_PIN = "1234"
 
 
 class _PgRow(dict):
@@ -938,24 +950,64 @@ def seed_catalog(conn):
 
 
 def seed_staff(conn):
-    """Owner/staff demo logins for the admin web app, seeded once and left
-    alone afterwards (real invites shouldn't be wiped by a demo reset)."""
+    """Owner/staff logins for the admin web app, seeded once on the first
+    boot of a fresh database (the staff table is empty) and left alone
+    afterwards — real invites shouldn't be wiped by a demo reset.
+
+    Fail-safe credential policy (audit N4): without explicit configuration
+    this REFUSES to create any staff account rather than silently minting a
+    login whose credential is public in the repo. See the STAFF_SEED comment
+    above for the exact contract. PIN values are never logged."""
     row = conn.execute("SELECT COUNT(*) AS n FROM staff").fetchone()
     if row["n"] > 0:
         return
-    if _SEED_OWNER_PIN == "1234" or _SEED_STAFF_PIN == "1234":
+
+    owner_pin = (os.environ.get("STAFF_SEED_OWNER_PIN") or "").strip()
+    staff_pin = (os.environ.get("STAFF_SEED_STAFF_PIN") or "").strip()
+    allow_default = os.environ.get("RASOI_ALLOW_DEFAULT_STAFF_PIN") == "1"
+
+    if not owner_pin or not staff_pin:
+        if not allow_default:
+            print(
+                "SECURITY: refusing to seed owner/staff accounts — "
+                "STAFF_SEED_OWNER_PIN/STAFF_SEED_STAFF_PIN are not both set, and "
+                "seeding them with the built-in fallback credential would give "
+                "anyone who reads this repo a known owner login. Set both "
+                "variables before the first boot of any deployment (or set "
+                "RASOI_ALLOW_DEFAULT_STAFF_PIN=1 for throwaway local "
+                "development only). The admin app will have no PIN login until "
+                "then; Firebase sign-in + the owner-email allowlist path "
+                "(STAFF_BOOTSTRAP_OWNER_EMAILS) is unaffected.",
+                flush=True,
+            )
+            return
         print(
-            "WARNING: seeding the owner/staff accounts with the default PIN "
-            "'1234' — this and the seeded phone numbers are public (they're "
-            "in source control). Set STAFF_SEED_OWNER_PIN/STAFF_SEED_STAFF_PIN "
-            "to real secrets before the first boot of any deployment "
-            "reachable outside a trusted network."
+            "WARNING: seeding owner/staff accounts with the built-in fallback "
+            "credential because RASOI_ALLOW_DEFAULT_STAFF_PIN=1. This is only "
+            "acceptable on a machine/instance nobody outside a trusted network "
+            "can reach — never on a public deployment.",
+            flush=True,
         )
+        owner_pin = owner_pin or _DEFAULT_STAFF_PIN
+        staff_pin = staff_pin or _DEFAULT_STAFF_PIN
+    elif owner_pin == _DEFAULT_STAFF_PIN or staff_pin == _DEFAULT_STAFF_PIN:
+        # Configured, but configured TO the public value — same exposure as
+        # not configuring it at all. Loud warning, still seeds (the operator
+        # may have deliberately chosen it), value never printed.
+        print(
+            "SECURITY: STAFF_SEED_OWNER_PIN/STAFF_SEED_STAFF_PIN is set to the "
+            "credential value that is public in this repository — every reader "
+            "of the repo knows it. Choose a different value before first boot "
+            "of any deployment reachable outside a trusted network.",
+            flush=True,
+        )
+
     ts = now()
-    for sid, name, phone, pin, role in STAFF_SEED:
+    pins = {"staff_owner": owner_pin, "staff_ops": staff_pin}
+    for sid, name, phone, role in STAFF_SEED:
         conn.execute(
             "INSERT INTO staff (id, name, phone, pin_hash, role, active, created_at) VALUES (?,?,?,?,?,1,?)",
-            (sid, name, phone, generate_password_hash(pin), role, ts),
+            (sid, name, phone, generate_password_hash(pins[sid]), role, ts),
         )
     conn.commit()
 

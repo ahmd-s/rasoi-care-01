@@ -1666,6 +1666,19 @@ def staff_me():
     return jsonify(staff_row_to_dict(request.staff))
 
 
+# Optional hardening (P1-06): comma-separated email allowlist. When set,
+# the automatic first-bootstrap owner role is granted ONLY to these emails
+# (case-insensitive, and only when the Firebase token marks the email
+# verified); everyone else bootstrap-creates as plain staff with a logged
+# warning. When unset, the historical first-come behavior applies — the
+# very first person to bootstrap a fresh deployment becomes owner.
+_STAFF_BOOTSTRAP_OWNER_EMAILS = {
+    e.strip().lower()
+    for e in (os.environ.get("STAFF_BOOTSTRAP_OWNER_EMAILS") or "").split(",")
+    if e.strip()
+}
+
+
 @app.route("/api/staff/bootstrap", methods=["POST"])
 @validate_json({
     "name": Field(str, max_len=100),
@@ -1678,7 +1691,12 @@ def bootstrap_staff():
     created as plain 'staff' regardless of what `role` they send — only
     an existing owner's invite flow (POST /api/staff, @require_owner) may
     mint a new owner. The `role` field is accepted for backward
-    compatibility with older clients but is otherwise ignored."""
+    compatibility with older clients but is otherwise ignored.
+
+    Hardened twice (P1-06): with STAFF_BOOTSTRAP_OWNER_EMAILS configured,
+    the automatic owner role is allowlist-gated (see above); and the
+    first-come check + insert runs inside a serialized transaction, so two
+    simultaneous first-bootstraps can no longer BOTH claim owner (N13)."""
     token = get_bearer_token()
     claims = verify_firebase_token(token) if token else None
     if not claims:
@@ -1688,32 +1706,74 @@ def bootstrap_staff():
     name = (data.get("name") or claims.get("name") or "").strip() or "Staff"
 
     conn = get_db()
-    row = conn.execute("SELECT * FROM staff WHERE firebase_uid = ?", (claims["uid"],)).fetchone()
-    if not row and claims.get("email") and claims.get("email_verified"):
-        row = conn.execute("SELECT * FROM staff WHERE email = ?", (claims["email"],)).fetchone()
-    ts = now()
-    if row:
-        conn.execute(
-            "UPDATE staff SET firebase_uid = ?, name = ? WHERE id = ?",
-            (claims["uid"], name, row["id"]),
-        )
-        staff_id = row["id"]
+    # Serialize the "is there any staff yet?" decision against concurrent
+    # first-bootstraps: SQLite takes the write lock immediately (BEGIN
+    # IMMEDIATE); Postgres takes a transaction-scoped advisory lock keyed
+    # to this decision (a SELECT FOR UPDATE can't lock what doesn't exist
+    # yet, but an advisory lock locks the decision itself).
+    if not database.DATABASE_URL:
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
     else:
-        any_staff = conn.execute("SELECT 1 FROM staff LIMIT 1").fetchone()
-        role = "owner" if not any_staff else "staff"
-        staff_id = new_uuid_id("STF")
-        conn.execute(
-            "INSERT INTO staff (id, name, phone, email, pin_hash, role, active, created_at, firebase_uid) "
-            "VALUES (?,?,?,?,?,?,1,?,?)",
-            (staff_id, name, f"fb-{claims['uid'][:24]}", claims.get("email"),
-             "firebase-auth", role, ts, claims["uid"]),
-        )
-    conn.commit()
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('rasoicare-owner-bootstrap'))")
+    try:
+        row = conn.execute("SELECT * FROM staff WHERE firebase_uid = ?", (claims["uid"],)).fetchone()
+        if not row and claims.get("email") and claims.get("email_verified"):
+            row = conn.execute("SELECT * FROM staff WHERE email = ?", (claims["email"],)).fetchone()
+        ts = now()
+        if row:
+            conn.execute(
+                "UPDATE staff SET firebase_uid = ?, name = ? WHERE id = ?",
+                (claims["uid"], name, row["id"]),
+            )
+            staff_id = row["id"]
+        else:
+            role = _decide_first_bootstrap_role(conn, claims)
+            staff_id = new_uuid_id("STF")
+            conn.execute(
+                "INSERT INTO staff (id, name, phone, email, pin_hash, role, active, created_at, firebase_uid) "
+                "VALUES (?,?,?,?,?,?,1,?,?)",
+                (staff_id, name, f"fb-{claims['uid'][:24]}", claims.get("email"),
+                 "firebase-auth", role, ts, claims["uid"]),
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     row = conn.execute("SELECT * FROM staff WHERE id = ?", (staff_id,)).fetchone()
     conn.close()
     if not row["active"]:
         return jsonify({"error": "Unauthorized", "message": "Staff account not found or inactive"}), 401
     return jsonify(staff_row_to_dict(row))
+
+
+def _decide_first_bootstrap_role(conn, claims):
+    """Role for a brand-new staff row on a fresh deployment — 'owner' for
+    the legitimate first bootstrap, 'staff' otherwise. MUST be called on
+    the caller's already-serialized connection (BEGIN IMMEDIATE on SQLite
+    / advisory lock on Postgres) so the any-staff check is covered by the
+    same lock that guards the insert — that's the N13 race fix. Isolated
+    as a function so the allowlist policy is unit-testable in one place."""
+    any_staff = conn.execute("SELECT 1 FROM staff LIMIT 1").fetchone()
+    if any_staff:
+        return "staff"
+    if _STAFF_BOOTSTRAP_OWNER_EMAILS:
+        email = (claims.get("email") or "").strip().lower()
+        verified = bool(claims.get("email_verified"))
+        if email and verified and email in _STAFF_BOOTSTRAP_OWNER_EMAILS:
+            return "owner"
+        print(
+            "SECURITY: first bootstrap did not claim the owner role — its "
+            "verified email is not on the STAFF_BOOTSTRAP_OWNER_EMAILS "
+            "allowlist (or the email is missing/unverified); created as "
+            "plain staff instead.",
+            flush=True,
+        )
+        return "staff"
+    return "owner"
 
 
 @app.route("/api/staff", methods=["GET"])

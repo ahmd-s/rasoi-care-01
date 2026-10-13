@@ -16,6 +16,12 @@ os.environ.setdefault("RATE_LIMIT_PUBLIC_MAX_CALLS", "100000")
 os.environ.setdefault("RATE_LIMIT_AUTHENTICATED_MAX_CALLS", "100000")
 os.environ.setdefault("RATE_LIMIT_AUTH_ACCOUNT_FREE_ATTEMPTS", "100000")
 os.environ.setdefault("RATE_LIMIT_AUTH_IP_FREE_ATTEMPTS", "100000")
+# The suite's staff-login tests exercise the seeded owner/staff logins, which
+# since P1-06 only seed when explicitly allowed — production defaults to NOT
+# seeding a publicly-known credential. This is the test-suite's explicit
+# opt-in; it never applies to a real deployment (the env var is only read in
+# this process).
+os.environ.setdefault("RASOI_ALLOW_DEFAULT_STAFF_PIN", "1")
 
 import pytest
 
