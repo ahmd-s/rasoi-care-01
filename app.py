@@ -2824,7 +2824,15 @@ def claim_booking(booking_id):
             "error": "Forbidden",
             "message": "Your account needs to be verified before you can accept jobs.",
         }), 403
-    conn = get_db()
+    # db_session (P1-02): commits on clean exit, rolls back on unexpected
+    # exceptions, and always closes — an error can no longer leak the
+    # connection. All early returns below are decision-only (nothing dirty
+    # is written on them), so commit-on-exit is a no-op there.
+    with database.db_session() as conn:
+        return _claim_booking_with_conn(conn, booking_id)
+
+
+def _claim_booking_with_conn(conn, booking_id):
     ts = now()
     cur = conn.execute(
         "UPDATE bookings SET technician_id = ?, status = 'Accepted', updated_at = ? "
@@ -2836,7 +2844,6 @@ def claim_booking(booking_id):
         row = conn.execute(
             "SELECT status, technician_id FROM bookings WHERE id = ?", (booking_id,)
         ).fetchone()
-        conn.close()
         if not row:
             return jsonify({"error": "not found"}), 404
         if row["technician_id"] is not None:
@@ -2849,7 +2856,6 @@ def claim_booking(booking_id):
             "message": "This request isn't open to accept any more.",
         }), 409
     row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
-    conn.close()
     return jsonify(booking_row_to_dict(row))
 
 
@@ -2867,18 +2873,23 @@ def advance_booking(booking_id):
     here, was a direct free-money path. Now requires a real technician
     session and that the booking is actually theirs."""
     data = request.get_json(force=True, silent=True) or {}
-    conn = get_db()
+    # db_session (P1-02): always closes, rolls back on unexpected exceptions
+    # (so a mid-side-effect crash can't leave half of the completion effects
+    # applied), commits on clean exit. Explicit conn.commit() below is kept
+    # where the original had it — committing twice is harmless.
+    with database.db_session() as conn:
+        return _advance_booking_with_conn(conn, data, booking_id)
+
+
+def _advance_booking_with_conn(conn, data, booking_id):
     row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
     if not row:
-        conn.close()
         return jsonify({"error": "not found"}), 404
     if row["technician_id"] != request.technician["id"]:
-        conn.close()
         return jsonify({"error": "not found"}), 404
 
     idx = STATUS_ORDER.index(row["status"]) if row["status"] in STATUS_ORDER else 0
     if idx >= len(STATUS_ORDER) - 1:
-        conn.close()
         return jsonify(booking_row_to_dict(row))
 
     new_status = STATUS_ORDER[idx + 1]
@@ -2890,7 +2901,6 @@ def advance_booking(booking_id):
     if new_status == "In Progress":
         submitted_code = (data.get("startCode") or "").strip()
         if not submitted_code or submitted_code != (row["start_code"] or ""):
-            conn.close()
             return jsonify({
                 "error": "Incorrect verification code",
                 "message": "Ask the customer for the 4-digit code shown in their app.",
@@ -2911,7 +2921,6 @@ def advance_booking(booking_id):
             ) if not present
         ]
         if missing:
-            conn.close()
             return jsonify({
                 "error": "Job not ready to complete",
                 "message": "Still missing: " + ", ".join(missing) + ".",
@@ -2928,7 +2937,6 @@ def advance_booking(booking_id):
             (booking_id,),
         ).fetchall()
         if pending_parts:
-            conn.close()
             names = ", ".join(r["name"] for r in pending_parts)
             return jsonify({
                 "error": "Awaiting customer approval",
@@ -2956,7 +2964,6 @@ def advance_booking(booking_id):
             BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)
         ).fetchone()
         conn.commit()
-        conn.close()
         return jsonify(booking_row_to_dict(current))
     if new_status == "In Progress":
         # Real start-of-work marker — used below to compute a genuine
@@ -3068,8 +3075,9 @@ def advance_booking(booking_id):
                 "UPDATE bookings SET time_on_site_min = ? WHERE id = ?", (minutes, booking_id)
             )
     conn.commit()
+    # Same-connection re-read: sees this transaction's own writes; the
+    # response is identical to the pre-refactor commit-then-read order.
     row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
-    conn.close()
     return jsonify(booking_row_to_dict(row))
 
 
@@ -3093,21 +3101,17 @@ def upload_job_photo(booking_id):
     data_b64 = data.get("dataBase64")
     if not data_b64:
         return jsonify({"error": "dataBase64 is required"}), 400
-    conn = get_db()
-    row = conn.execute("SELECT technician_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"error": "not found"}), 404
-    if row["technician_id"] != request.technician["id"]:
-        conn.close()
-        return jsonify({"error": "not found"}), 404
-    if kind == "before":
-        conn.execute("UPDATE bookings SET before_photo_b64 = ? WHERE id = ?", (data_b64, booking_id))
-    else:
-        conn.execute("UPDATE bookings SET after_photo_b64 = ? WHERE id = ?", (data_b64, booking_id))
-    conn.commit()
-    conn.close()
-    return jsonify({"ok": True})
+    with database.db_session() as conn:
+        row = conn.execute("SELECT technician_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        if row["technician_id"] != request.technician["id"]:
+            return jsonify({"error": "not found"}), 404
+        if kind == "before":
+            conn.execute("UPDATE bookings SET before_photo_b64 = ? WHERE id = ?", (data_b64, booking_id))
+        else:
+            conn.execute("UPDATE bookings SET after_photo_b64 = ? WHERE id = ?", (data_b64, booking_id))
+        return jsonify({"ok": True})
 
 
 @app.route("/api/bookings/<booking_id>/signature", methods=["PATCH"])
@@ -3122,18 +3126,14 @@ def upload_job_signature(booking_id):
     data_b64 = data.get("dataBase64")
     if not data_b64:
         return jsonify({"error": "dataBase64 is required"}), 400
-    conn = get_db()
-    row = conn.execute("SELECT technician_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"error": "not found"}), 404
-    if row["technician_id"] != request.technician["id"]:
-        conn.close()
-        return jsonify({"error": "not found"}), 404
-    conn.execute("UPDATE bookings SET signature_b64 = ? WHERE id = ?", (data_b64, booking_id))
-    conn.commit()
-    conn.close()
-    return jsonify({"ok": True})
+    with database.db_session() as conn:
+        row = conn.execute("SELECT technician_id FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        if row["technician_id"] != request.technician["id"]:
+            return jsonify({"error": "not found"}), 404
+        conn.execute("UPDATE bookings SET signature_b64 = ? WHERE id = ?", (data_b64, booking_id))
+        return jsonify({"ok": True})
 
 
 _PHOTO_MIME = {"before": "image/jpeg", "after": "image/jpeg", "signature": "image/png"}
@@ -4144,49 +4144,42 @@ def update_booking_service(booking_id):
     is final by then."""
     data = request.get_json(force=True, silent=True) or {}
     service_id = data["serviceId"]
-    conn = get_db()
-    row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"error": "not found"}), 404
-    if row["technician_id"] != request.technician["id"]:
-        conn.close()
-        return jsonify({"error": "not found"}), 404
-    if row["status"] in ("Completed", "Cancelled"):
-        conn.close()
-        return jsonify({
-            "error": "Job already finished",
-            "message": "Can't change the service on a completed or cancelled job.",
-        }), 400
-    service_row = conn.execute(SERVICE_SELECT + " WHERE services.id = ?", (service_id,)).fetchone()
-    if not service_row:
-        conn.close()
-        return jsonify({"error": "Unknown serviceId"}), 400
-    if service_row["category"] != row["category"]:
-        conn.close()
-        return jsonify({
-            "error": "Service category mismatch",
-            "message": "That service isn't offered for this job's category.",
-        }), 400
-    new_service_name = service_row["appliance_name"] + " · " + service_row["name"]
-    new_price = service_row["price"]
-    ts = now()
-    conn.execute(
-        "INSERT INTO booking_service_changes "
-        "(id, booking_id, old_service, new_service, old_price, new_price, created_at) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (new_uuid_id("SVCC"), booking_id, row["service"], new_service_name, row["price"], new_price, ts),
-    )
-    conn.execute(
-        "UPDATE bookings SET service = ?, price = ?, total_amount = ?, updated_at = ? WHERE id = ?",
-        (new_service_name, new_price, new_price, ts, booking_id),
-    )
-    conn.commit()
-    row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
-    parts = fetch_booking_parts(conn, booking_id)
-    service_changes = fetch_booking_service_changes(conn, booking_id)
-    conn.close()
-    return jsonify(booking_row_to_dict(row, parts=parts, service_changes=service_changes))
+    with database.db_session() as conn:
+        row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        if row["technician_id"] != request.technician["id"]:
+            return jsonify({"error": "not found"}), 404
+        if row["status"] in ("Completed", "Cancelled"):
+            return jsonify({
+                "error": "Job already finished",
+                "message": "Can't change the service on a completed or cancelled job.",
+            }), 400
+        service_row = conn.execute(SERVICE_SELECT + " WHERE services.id = ?", (service_id,)).fetchone()
+        if not service_row:
+            return jsonify({"error": "Unknown serviceId"}), 400
+        if service_row["category"] != row["category"]:
+            return jsonify({
+                "error": "Service category mismatch",
+                "message": "That service isn't offered for this job's category.",
+            }), 400
+        new_service_name = service_row["appliance_name"] + " · " + service_row["name"]
+        new_price = service_row["price"]
+        ts = now()
+        conn.execute(
+            "INSERT INTO booking_service_changes "
+            "(id, booking_id, old_service, new_service, old_price, new_price, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (new_uuid_id("SVCC"), booking_id, row["service"], new_service_name, row["price"], new_price, ts),
+        )
+        conn.execute(
+            "UPDATE bookings SET service = ?, price = ?, total_amount = ?, updated_at = ? WHERE id = ?",
+            (new_service_name, new_price, new_price, ts, booking_id),
+        )
+        row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
+        parts = fetch_booking_parts(conn, booking_id)
+        service_changes = fetch_booking_service_changes(conn, booking_id)
+        return jsonify(booking_row_to_dict(row, parts=parts, service_changes=service_changes))
 
 
 @app.route("/api/technician/bookings/<booking_id>/parts", methods=["POST"])

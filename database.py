@@ -21,8 +21,10 @@ so nothing outside this file needs to change.
 
 import sqlite3
 import os
+import contextlib
 import re
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -380,8 +382,15 @@ class _PgConnection:
     (`?` placeholders, conn.execute(...).fetchone()/.fetchall(),
     conn.executescript(...)) work unchanged against Postgres."""
 
-    def __init__(self, pg_conn):
+    def __init__(self, pg_conn, pool=None):
         self._conn = pg_conn
+        # When pool is set, close() returns the connection to the pool
+        # instead of destroying it — that's the whole point of pooling
+        # (skips the TCP+TLS handshake per request). Pool or no pool, the
+        # sqlite3 semantics app.py relies on are preserved exactly:
+        # close() with an open transaction DISCARDS the uncommitted work
+        # (rollback), never leaks it into the next borrower.
+        self._pool = pool
 
     def execute(self, sql, params=()):
         import psycopg2.extras
@@ -398,20 +407,98 @@ class _PgConnection:
     def commit(self):
         self._conn.commit()
 
+    def rollback(self):
+        self._conn.rollback()
+
     def close(self):
+        if self._pool is not None:
+            try:
+                import psycopg2.extensions
+
+                if self._conn.status == psycopg2.extensions.STATUS_IN_TRANSACTION:
+                    self._conn.rollback()
+            except Exception:
+                # The connection itself is broken (server gone, network
+                # drop) — hand it back flagged for destruction so the pool
+                # doesn't hand a dead socket to the next request.
+                self._pool.putconn(self._conn, close=True)
+                return
+            self._pool.putconn(self._conn)
+            return
         self._conn.close()
+
+
+# Postgres connection pool — deliberately small: this deployment runs
+# exactly one gunicorn worker and one thread (enforced in Procfile /
+# render.yaml / app.py's boot check), so typical concurrency is 1; the
+# ceiling exists only so a future thread bump or an interim misconfiguration
+# can't exhaust Postgres's own max_connections.
+PG_POOL_MIN = 1
+PG_POOL_MAX = 4
+
+_pg_pool = None
+_pg_pool_lock = threading.Lock()
+
+
+def _get_pg_pool():
+    """Lazily-built process-wide pool; None means 'create on first use'.
+    Raises through to the caller if Postgres can't be reached (same visible
+    behavior as the old connect-per-call path: the request fails)."""
+    global _pg_pool
+    if _pg_pool is None:
+        with _pg_pool_lock:
+            if _pg_pool is None:
+                import psycopg2.pool
+
+                _pg_pool = psycopg2.pool.SimpleConnectionPool(
+                    PG_POOL_MIN, PG_POOL_MAX, DATABASE_URL
+                )
+    return _pg_pool
 
 
 def get_db():
     if DATABASE_URL:
         import psycopg2
 
-        pg_conn = psycopg2.connect(DATABASE_URL)
-        return _PgConnection(pg_conn)
+        try:
+            pool = _get_pg_pool()
+            pg_conn = pool.getconn()
+        except Exception:
+            # Pool unavailable (init failed / exhausted / broken) — fall
+            # back to a direct one-off connection so the request behaves
+            # exactly as it did before pooling existed.
+            pg_conn = psycopg2.connect(DATABASE_URL)
+            return _PgConnection(pg_conn)
+        return _PgConnection(pg_conn, pool=pool)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+@contextlib.contextmanager
+def db_session():
+    """Error-safe replacement for the manual get_db()/commit()/close() dance:
+    yields a connection, commits on clean exit (including plain `return` from
+    inside the with-block), rolls back and re-raises on exception, and ALWAYS
+    closes — an unexpected error can no longer leak the connection (on
+    Postgres: a socket; on SQLite: an open handle + a hot journal).
+
+    Deliberately incremental: existing handlers still calling
+    get_db()/conn.close() keep working unchanged; handlers migrate to this
+    one at a time, money-path booking mutations first."""
+    conn = get_db()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass  # a broken connection must not mask the real error
+        raise
+    finally:
+        conn.close()
 
 
 def _table_columns(conn, table_name):
@@ -419,9 +506,15 @@ def _table_columns(conn, table_name):
     the three migrate_* functions below don't need to know which one
     they're running against."""
     if DATABASE_URL:
+        # table_schema filter: without it, a same-named table in ANY schema
+        # on the search_path (e.g. a leftover `temp.bookings`, or a shared
+        # hosting schema) makes this return that table's columns too —
+        # corrupting every migrate_* decision below with another table's
+        # shape. current_schema() scopes the lookup to the schema this
+        # connection actually writes to.
         rows = conn.execute(
             "SELECT column_name AS name FROM information_schema.columns "
-            "WHERE table_name = ?",
+            "WHERE table_name = ? AND table_schema = current_schema()",
             (table_name,),
         ).fetchall()
     else:
@@ -628,8 +721,27 @@ def migrate_bookings_technician_nullable(conn):
     exist today rather than a hardcoded list, so it can't drift out of
     sync with migrate_bookings_columns as more columns get added later."""
     if DATABASE_URL:
-        conn.execute("ALTER TABLE bookings ALTER COLUMN technician_id DROP NOT NULL")
-        conn.commit()
+        # Idempotence guard: previously this ran `DROP NOT NULL` on EVERY
+        # boot. Unconditional ALTERs take an ACCESS EXCLUSIVE table lock and
+        # rewrite catalog rows each boot — on a busy production database
+        # that's a pointless lock queue at every deploy, and it breaks
+        # read-only/limited-migration roles. Check the actual nullability
+        # first and ALTER only when the constraint is genuinely still there.
+        row = conn.execute(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'bookings' "
+            "AND column_name = 'technician_id'"
+        ).fetchone()
+        if row is None:
+            # bookings doesn't exist in this schema — SCHEMA above should
+            # have created it; failing loudly beats ALTERing a phantom.
+            raise RuntimeError(
+                "migrate_bookings_technician_nullable: bookings.technician_id "
+                "not found in the current schema"
+            )
+        if row["is_nullable"] == "NO":
+            conn.execute("ALTER TABLE bookings ALTER COLUMN technician_id DROP NOT NULL")
+            conn.commit()
         return
     info = conn.execute("PRAGMA table_info(bookings)").fetchall()
     tech_col = next((r for r in info if r["name"] == "technician_id"), None)
@@ -907,6 +1019,16 @@ def migrate_add_customer_catalog_services(conn):
 
 def init_db():
     conn = get_db()
+    try:
+        _init_db_contents(conn)
+    finally:
+        # A migration that raises mid-init must not leak the connection —
+        # on Postgres that's a socket (pooled close() rolls back dirty
+        # transactions first), on SQLite an open handle with a hot journal.
+        conn.close()
+
+
+def _init_db_contents(conn):
     # Boot-time proof of which storage backend actually took effect — the
     # silent-failure mode this guards against is the exact C1 incident: a
     # deploy that meant to use Postgres but didn't get DATABASE_URL set falls
@@ -939,7 +1061,6 @@ def init_db():
     # no-op once they're gone — so it's safe to run on every boot rather
     # than needing a one-time migration step.
     purge_demo_seed_rows(conn)
-    conn.close()
 
 
 def next_id(conn, counter_name, prefix):
