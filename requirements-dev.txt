@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest>=8.0.0
+# CI quality gate (P1-12): audits installed/resolved requirements against the
+# OSV database so a new known CVE fails the build instead of shipping.
+pip-audit>=2.7.0

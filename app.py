@@ -28,6 +28,31 @@ from flask import Flask, request, jsonify, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db, init_db, next_id, now, new_uuid_id
 
+# ---------------------------------------------------------------- worker mode
+# This process keeps real security state in memory: the sliding-window rate
+# limiters, the auth backoff counters, and the cancellation OTP codes (see
+# the rate-limit section below). With more than one worker process, each
+# keeps its own private copy of that state — an attacker's attempts get
+# counted (and their OTPs issued) in worker A while verification lands in
+# worker B, so limits stop limiting and OTPs stop verifying. Procfile and
+# render.yaml therefore pin gunicorn to `--workers 1 --threads 1`, which is
+# exactly what gunicorn's own defaults already were — the flags just make
+# the constraint explicit and impossible to change by accident in the
+# deploy config. Scaling past one worker is a deliberate project: move that
+# state to a shared store (Redis/DB) FIRST, then raise this.
+# gunicorn also honours the WEB_CONCURRENCY env var where present; warn
+# loudly if anything tries to raise it without the shared-state work done.
+_web_concurrency = (os.environ.get("WEB_CONCURRENCY") or "").strip()
+if _web_concurrency and _web_concurrency != "1":
+    print(
+        f"WARNING: WEB_CONCURRENCY={_web_concurrency} but this app keeps rate-limit, "
+        "auth-backoff and OTP state in process memory — multi-worker deploys make "
+        "those limits unenforceable. Run exactly one worker until that state moves "
+        "to a shared store.",
+        file=sys.stderr,
+    )
+
+
 app = Flask(__name__)
 FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
 # The largest legitimate request body is a base64 job photo (validate_json
@@ -879,14 +904,41 @@ STATUS_ORDER = ["Requested", "Accepted", "On the way", "In Progress", "Completed
 
 # ---------------------------------------------------------------- CORS
 # Hand-rolled instead of pulling in flask-cors, so this has zero extra
-# dependencies to install at deploy time. Lets any frontend origin
-# (the customer app, technician app, admin dashboard — each opened as
-# its own file/origin) call this API from the browser.
+# dependencies to install at deploy time.
+#
+# Previously this reflected Access-Control-Allow-Origin: * on every response.
+# That's harmless to the native Flutter apps (they don't enforce CORS), but it
+# let any web page anywhere read the authenticated API responses from a
+# victim's browser (any site could fire fetch() with a stolen/cookieless
+# token flow or probe endpoints). Now the origin is echoed only when it's on
+# the allowlist. Native apps and the same-origin legacy HTML pages served by
+# this very app (admin.html etc.) never needed CORS in the first place, so
+# the default list is deliberately minimal: the production backend's own
+# origin (Render serves it) plus localhost for development. Set
+# ALLOWED_ORIGINS (comma-separated) to widen it deliberately.
+#
+# `Authorization` joins Allow-Headers so a future Flutter-web build sending
+# Bearer tokens can't be silently broken by a blocked preflight.
+_ALLOWED_ORIGINS = {
+    o.strip()
+    for o in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "https://rasoicare-backend.onrender.com,http://localhost:8420,http://localhost:8000",
+    ).split(",")
+    if o.strip()
+}
+
+
 @app.after_request
 def add_cors_headers(resp):
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    origin = request.headers.get("Origin")
+    if origin and origin in _ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        # Cacheable per-origin response: without Vary, a shared cache could
+        # serve one allowlisted origin's CORS headers to a different origin.
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     return resp
 
 

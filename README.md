@@ -67,38 +67,58 @@ auto-detect Flask). Pick whichever you already have an account with.
 
 Render's **free** web services use ephemeral disk — the SQLite file
 above gets wiped on every redeploy, taking any real bookings/accounts
-with it. To fix that, point the backend at a real Postgres database
-instead (nothing else changes; `database.py` auto-detects it):
+with it. The backend now ships a blueprint (`render.yaml`) that fixes
+this by default: deploying the blueprint provisions a **PostgreSQL
+database and wires `DATABASE_URL` to it automatically** — no manual
+environment variable needed.
 
-1. Get a free Postgres database — [Neon](https://neon.tech) has a
-   generous free tier and takes under a minute to provision.
+**Plan policy (read before the first deploy):**
+
+- The blueprint's database plan is a **paid tier on purpose**. The free
+  Postgres plan expires and keeps no backups — it is acceptable only as
+  a short-lived throwaway preview/CI database, **never as the permanent
+  production database**.
+- Production must run a paid plan with automated backups, verified in
+  the Render dashboard after the first deploy.
+- The first boot logs which storage backend actually took effect
+  (`init_db: storage backend = …`) — check it after every deploy; it
+  must say PostgreSQL for any deployment holding real data.
+
+Manual alternative (any host, no blueprint):
+
+1. Provision a **persistent** Postgres database (paid tier for
+   production; free tiers from Neon/Supabase are fine for throwaway
+   dev/test databases only).
 2. Copy its connection string (looks like
    `postgresql://user:password@host/dbname?sslmode=require`).
 3. In the Render dashboard, open the `rasoicare-backend` service →
    **Environment** → add a variable named `DATABASE_URL` with that
    connection string as the value → save (Render redeploys
    automatically).
-4. That's it — `database.py` creates the tables and seeds demo data on
-   Postgres exactly like it does on SQLite, and every booking/account
-   from then on survives redeploys.
+4. That's it — `database.py` creates the tables on Postgres exactly
+   like it does on SQLite, and every booking/account from then on
+   survives redeploys.
 
 Without `DATABASE_URL` set, the backend keeps working exactly as
-before (SQLite, zero setup) — this is purely additive.
+before (SQLite, zero setup) — but on an ephemeral host that means the
+data is still wiped per redeploy, so treat SQLite as local-development
+only.
+
+### Worker model (do not scale the gunicorn worker count)
+
+`Procfile` and `render.yaml` pin gunicorn to `--workers 1 --threads 1`
+— deliberately, not as a placeholder. Rate-limit buckets, auth-backoff
+counters, and cancellation OTP codes live in this one process's memory;
+a second worker would split that state and silently disarm all of it.
+Scale out only after moving that state to a shared store (Redis/DB).
 
 ### Important: SQLite + free hosting tiers
 
 Free web-service tiers on Render/Railway typically use an **ephemeral
 disk** — if the service restarts or redeploys, the `rasoicare.db` file
-can reset. That's fine for testing the deploy, but for anything real you
-have two options:
-
-- **Add a persistent disk** (small paid add-on on Render/Railway) so
-  `rasoicare.db` survives restarts, or
-- **Swap SQLite for a managed Postgres** — Render, Railway, and Supabase
-  all offer a free Postgres instance. Only `database.py` would need to
-  change (swap `sqlite3` for `psycopg2` and adjust the connection
-  string); `app.py`'s routes stay identical since they only call the
-  helper functions in `database.py`.
+resets. That's fine for local development and throwaway deploys, but
+for anything real use the Postgres setup above (blueprint or manual) —
+and never the free Postgres plan for production data.
 
 ## The three apps
 

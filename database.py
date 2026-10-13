@@ -24,7 +24,7 @@ import os
 import re
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rasoicare.db")
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -404,7 +404,12 @@ def _table_columns(conn, table_name):
 
 
 def now():
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    # timezone-aware UTC, formatted exactly as the old naive utcnow() output
+    # (ISO 8601 seconds precision, Z-suffixed) — identical string, no
+    # deprecation warning. Every stored timestamp keeps its existing format,
+    # so comparisons against stored values (updated_at >= cutoff etc.) and
+    # client-side parsing are unchanged.
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def seed(conn):
@@ -876,6 +881,21 @@ def migrate_add_customer_catalog_services(conn):
 
 def init_db():
     conn = get_db()
+    # Boot-time proof of which storage backend actually took effect — the
+    # silent-failure mode this guards against is the exact C1 incident: a
+    # deploy that meant to use Postgres but didn't get DATABASE_URL set falls
+    # back to SQLite on ephemeral disk and everything written is lost on the
+    # next redeploy. The connection string itself is deliberately never
+    # logged — it embeds the database password.
+    if DATABASE_URL:
+        print("init_db: storage backend = PostgreSQL (persistent, from DATABASE_URL)", flush=True)
+    else:
+        print(
+            f"init_db: storage backend = SQLite at {DB_PATH} — data is lost on "
+            "ephemeral hosts on every redeploy; set DATABASE_URL to a persistent "
+            "Postgres instance for production",
+            flush=True,
+        )
     conn.executescript(SCHEMA)
     conn.commit()
     migrate_bookings_columns(conn)

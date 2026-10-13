@@ -1,12 +1,63 @@
+# RasoiCare Render blueprint.
+#
+# DATA PERSISTENCE (fixes audit C1): the `databases:` block below provisions
+# a real PostgreSQL instance and wires DATABASE_URL to it automatically.
+# Before this, the blueprint only created an ephemeral web service and any
+# deploy without a manually-set DATABASE_URL silently fell back to SQLite on
+# Render's ephemeral disk — every booking/account/stock change was wiped on
+# each redeploy.
+#
+# PLAN POLICY — IMPORTANT:
+#   * The database plan below is a PAID tier on purpose. The free Postgres
+#     plan expires and does not keep backups; it is acceptable ONLY as a
+#     short-lived throwaway preview/CI database, never as the permanent
+#     production database.
+#   * Production must run a paid plan with automated backups (and
+#     point-in-time recovery if available on the plan), verified in the
+#     Render dashboard after the first deploy.
+#   * If Render has renamed plan tiers since this file was written, pick the
+#     current paid tier in the dashboard — the requirement is "paid + backups",
+#     not the literal string below.
 services:
   - type: web
     name: rasoicare-backend
     runtime: python
-    plan: free
+    plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    # --workers 1 --threads 1 is load-bearing, not a placeholder: rate-limit,
+    # backoff and OTP state live in process memory (see app.py). Do not raise.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 1
     envVars:
       - key: JWT_SECRET
         generateValue: true
+      # Wired to the managed Postgres below — remove `sync:false` limbo that
+      # used to leave this unset and silently downgrade the app to SQLite.
       - key: DATABASE_URL
+        fromDatabase:
+          name: rasoicare-postgres
+          property: connectionString
+      # REQUIRED before first boot (P1-06): seed_staff() refuses to create
+      # owner/staff accounts with the well-known default PIN unless you
+      # explicitly opt in via RASOI_ALLOW_DEFAULT_STAFF_PIN=1. Set real
+      # secrets here BEFORE the first boot that creates the staff table —
+      # seeding is once-only, changing these later has no effect on rows
+      # that already exist.
+      - key: STAFF_SEED_OWNER_PIN
         sync: false
+      - key: STAFF_SEED_STAFF_PIN
+        sync: false
+      # Optional but recommended (P1-06): comma-separated allowlist of email
+      # addresses that may claim the automatic first-bootstrap owner role.
+      # Leave unset only if you accept first-come owner claim on a fresh DB.
+      - key: STAFF_BOOTSTRAP_OWNER_EMAILS
+        sync: false
+      # Optional: extra browser origins allowed by the CORS policy
+      # (comma-separated). The backend's own origin and localhost are
+      # always allowed; native mobile apps don't use CORS at all.
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+databases:
+  - name: rasoicare-postgres
+    databaseName: rasoicare
+    plan: basic
