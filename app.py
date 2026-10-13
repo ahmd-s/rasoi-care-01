@@ -2936,10 +2936,28 @@ def advance_booking(booking_id):
             }), 400
 
     ts = now()
-    conn.execute(
-        "UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?",
-        (new_status, ts, booking_id),
+    # The status transition itself is guarded — `AND status = ?` matches
+    # only if the booking is still in the state we just read. This is the
+    # same race-guard pattern claim_booking uses. Without it, two
+    # concurrent "complete" taps (double-tap, flaky network retry, or a
+    # completion racing a cancellation) could both read "In Progress",
+    # both pass every gate above, and BOTH fire the completion side
+    # effects below — double-counting jobs_completed, double-firing the
+    # weekly/monthly incentives, and double-crediting Care Coins.
+    # With it, exactly one request's UPDATE can match; the loser re-reads
+    # and is told the current (already advanced) state, idempotently, with
+    # zero new ledger/coin rows.
+    cur = conn.execute(
+        "UPDATE bookings SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+        (new_status, ts, booking_id, row["status"]),
     )
+    if cur.rowcount != 1:
+        current = conn.execute(
+            BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)
+        ).fetchone()
+        conn.commit()
+        conn.close()
+        return jsonify(booking_row_to_dict(current))
     if new_status == "In Progress":
         # Real start-of-work marker — used below to compute a genuine
         # time-on-site instead of a made-up figure.

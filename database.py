@@ -943,6 +943,37 @@ def init_db():
 
 
 def next_id(conn, counter_name, prefix):
+    """Mints the next human-facing id (RC-7, CMP-3) from the named counter.
+
+    Atomically, per backend:
+
+    - Postgres: one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` — the
+      row lock taken by the UPDATE itself serializes concurrent minters, so
+      two simultaneous creations can never observe the same value. (The old
+      SELECT-then-UPDATE here was a read-modify-write race: under concurrent
+      load both requests read the same value, both minted e.g. RC-41, and
+      the second booking INSERT died on the bookings primary key with a 500.)
+    - SQLite: same read-modify-write shape, but inside BEGIN IMMEDIATE so
+      the database's write lock is taken before the read — concurrent
+      minters queue instead of interleaving. (If a transaction is somehow
+      already open on this connection we can't upgrade it; the fallback is
+      still safe — the loser's UPDATE hits SQLite's busy/lock error and the
+      request fails loudly rather than minting a duplicate.)
+
+    Callers must commit() (as every handler does) — the counter value only
+    becomes visible to other requests at commit, so an aborted handler just
+    releases the number back, and no id is ever burned by a failed request.
+    """
+    if DATABASE_URL:
+        row = conn.execute(
+            "INSERT INTO counters (name, value) VALUES (?, 1) "
+            "ON CONFLICT (name) DO UPDATE SET value = counters.value + 1 "
+            "RETURNING value",
+            (counter_name,),
+        ).fetchone()
+        return f"{prefix}-{row['value']}"
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT value FROM counters WHERE name = ?", (counter_name,)).fetchone()
     if row is None:
         # Used to always exist because seed() unconditionally inserted the
