@@ -59,4 +59,4 @@ databases:
     databaseName: rasoicare_staging
     # Paid persistent plan for important staging/test data. Use plan: free
     # only for disposable throwaway tests.
-    plan: basic
+    plan: 0.1c-256mb
