@@ -1,0 +1,62 @@
+# RasoiCare STAGING Render blueprint.
+#
+# Deploy this as a SEPARATE Blueprint from production `render.yaml`
+# (Dashboard -> New -> Blueprint -> set Blueprint Path to `render.staging.yaml`).
+# Resource names below are intentionally unique so staging never collides
+# with or overwrites production (`rasoicare-backend` / `rasoicare-postgres`).
+#
+# DATA PERSISTENCE: the `databases:` block provisions a staging-only
+# PostgreSQL instance and wires DATABASE_URL to it. Do not point this
+# service at the production database connection string.
+#
+# PLAN POLICY:
+#   * Default below is a PAID Postgres plan so important staging/test data
+#     survives and can use backups. Change to `free` ONLY for short-lived
+#     throwaway experiments -- free Postgres expires and keeps no backups.
+#   * Do not copy production credentials, DATABASE_URL values, or user data
+#     into staging. Set staging-specific secrets in the Dashboard when
+#     prompted (`sync: false` keys).
+#   * Never set RASOI_ALLOW_DEFAULT_STAFF_PIN=1 on staging reachable outside
+#     a trusted network -- seed_staff() will refuse default credentials unless
+#     you explicitly opt in (dev/throwaway only).
+services:
+  - type: web
+    name: rasoicare-staging-backend
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    # --workers 1 --threads 1 is load-bearing, not a placeholder: rate-limit,
+    # backoff and OTP state live in process memory (see app.py). Do not raise.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 1
+    envVars:
+      # Staging-only secret -- generated independently of production.
+      - key: JWT_SECRET
+        generateValue: true
+      # Wired ONLY to the staging Postgres below.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rasoicare-staging-postgres
+          property: connectionString
+      # REQUIRED before first boot (P1-06): set STAGING-specific PINs in the
+      # Dashboard. Do not reuse production PIN values. Seeding is once-only;
+      # changing these later does not rewrite existing staff rows.
+      - key: STAFF_SEED_OWNER_PIN
+        sync: false
+      - key: STAFF_SEED_STAFF_PIN
+        sync: false
+      # REQUIRED for safe owner bootstrap on a fresh staging DB: comma-separated
+      # allowlist of verified emails that may claim the first-bootstrap owner
+      # role. Set staging emails only -- leave blank only if you accept
+      # first-come owner claim (not recommended).
+      - key: STAFF_BOOTSTRAP_OWNER_EMAILS
+        sync: false
+      # Optional: extra browser origins for CORS (comma-separated).
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+databases:
+  - name: rasoicare-staging-postgres
+    databaseName: rasoicare_staging
+    # Paid persistent plan for important staging/test data. Use plan: free
+    # only for disposable throwaway tests.
+    plan: basic
