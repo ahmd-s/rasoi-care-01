@@ -16,9 +16,9 @@ Future<void> main() async {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   } catch (e) {
     // Expected until you run `flutterfire configure` with a real project —
-    // see lib/firebase_options.dart. The app falls back to MockAuthService
-    // (lib/state/auth_providers.dart) so everything still runs.
-    debugPrint('Firebase not configured — using mock auth. ($e)');
+    // see lib/firebase_options.dart. Debug/profile fall back to
+    // MockAuthService; release uses UnconfiguredAuthService (no demo OTP).
+    debugPrint('Firebase not configured — auth factory will choose mock or fail-closed. ($e)');
   }
   runApp(const ProviderScope(child: RasoiCarePartnerApp()));
 }

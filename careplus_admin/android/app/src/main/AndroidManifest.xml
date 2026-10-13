@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Every real network call this app makes (Firebase Auth, the RasoiCare
+         backend) needs this — previously only declared in the debug/profile
+         manifest variants, so a release build depended on dependency-merged
+         INTERNET rather than this app declaring it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Fingerprint/face unlock, offered after sign-up — see BiometricService -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 

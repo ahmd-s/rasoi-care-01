@@ -1,19 +1,23 @@
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api/staff_bootstrap_service.dart';
 import '../data/auth/auth_service.dart';
-import '../data/auth/firebase_auth_service.dart';
+import '../data/auth/auth_service_factory.dart';
 import '../data/auth/mock_auth_service.dart';
 import '../data/firestore/staff_profile_service.dart';
 import '../data/models.dart';
 
-/// Picks the real service if `Firebase.initializeApp()` succeeded in
-/// main.dart, otherwise the mock.
+/// Picks Firebase when initialized; otherwise mock in debug/profile only.
+/// Release builds never fall back to [MockAuthService] (P2-14).
 final authServiceProvider = Provider<AuthService>(
-  (ref) => Firebase.apps.isEmpty ? MockAuthService() : FirebaseAuthService(),
+  (ref) => selectAuthService(
+    firebaseReady: Firebase.apps.isNotEmpty,
+    allowMock: !kReleaseMode,
+  ),
 );
 
 final staffProfileServiceProvider = Provider<StaffProfileService>(
@@ -84,9 +88,8 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
   @override
   AuthFlowState build() => const AuthFlowState();
 
-  /// True when running against the mock — the OTP screen uses this to decide
-  /// whether to show the simulated SMS auto-fill (mock only).
-  bool get isMock => !ref.read(authServiceProvider).isLive;
+  /// True only for [MockAuthService] — not for an unconfigured release build.
+  bool get isMock => ref.read(authServiceProvider) is MockAuthService;
 
   void setRole(AdminRole role) {
     state = state.copyWith(role: role);

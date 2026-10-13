@@ -2,19 +2,23 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api/backend_client.dart';
 import '../data/firebase/auth_service.dart';
-import '../data/firebase/firebase_auth_service.dart';
+import '../data/firebase/auth_service_factory.dart';
 import '../data/firebase/mock_auth_service.dart';
 
-/// Picks the real service if `Firebase.initializeApp()` succeeded in
-/// main.dart, otherwise the mock. This is the one line you'd ever need to
-/// force a particular mode (e.g. for a demo) — override it in a test harness
-/// via `ProviderScope(overrides: [authServiceProvider.overrideWithValue(...)])`.
+/// Picks Firebase when initialized; otherwise mock in debug/profile only.
+/// Release builds never fall back to [MockAuthService] (P2-14).
+/// Override in tests via
+/// `ProviderScope(overrides: [authServiceProvider.overrideWithValue(...)])`.
 final authServiceProvider = Provider<AuthService>(
-  (ref) => Firebase.apps.isEmpty ? MockAuthService() : FirebaseAuthService(),
+  (ref) => selectAuthService(
+    firebaseReady: Firebase.apps.isNotEmpty,
+    allowMock: !kReleaseMode,
+  ),
 );
 
 /// Set once BiometricLockScreen successfully authenticates this session —
@@ -70,10 +74,9 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
   @override
   AuthFlowState build() => const AuthFlowState();
 
-  /// True when running against the mock — the OTP screen uses this to decide
-  /// whether to show the simulated SMS auto-fill (mock only; real SMS
-  /// auto-fill requires platform-level SMS Retriever wiring not included here).
-  bool get isMock => !ref.read(authServiceProvider).isLive;
+  /// True only for [MockAuthService] — not for an unconfigured release build.
+  /// The OTP screen uses this for simulated SMS auto-fill (demo code 4402).
+  bool get isMock => ref.read(authServiceProvider) is MockAuthService;
 
   Future<bool> sendOtp(String tenDigitPhone) async {
     state = state.copyWith(sending: true, clearError: true, phone: tenDigitPhone);

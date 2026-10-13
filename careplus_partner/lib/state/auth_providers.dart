@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,16 +11,19 @@ import 'package:http/http.dart' as http;
 
 import '../data/api/api_config.dart';
 import '../data/auth/auth_service.dart';
-import '../data/auth/firebase_auth_service.dart';
+import '../data/auth/auth_service_factory.dart';
 import '../data/auth/mock_auth_service.dart';
 import '../data/firestore/technician_profile_service.dart';
 import '../data/firebase/technician_upload_service.dart';
 import 'providers.dart';
 
-/// Picks the real service if `Firebase.initializeApp()` succeeded in
-/// main.dart, otherwise the mock.
+/// Picks Firebase when initialized; otherwise mock in debug/profile only.
+/// Release builds never fall back to [MockAuthService] (P2-14).
 final authServiceProvider = Provider<AuthService>(
-  (ref) => Firebase.apps.isEmpty ? MockAuthService() : FirebaseAuthService(),
+  (ref) => selectAuthService(
+    firebaseReady: Firebase.apps.isNotEmpty,
+    allowMock: !kReleaseMode,
+  ),
 );
 
 final technicianProfileServiceProvider =
@@ -262,9 +266,8 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
   @override
   AuthFlowState build() => const AuthFlowState();
 
-  /// True when running against the mock — the OTP screen uses this to decide
-  /// whether to show the simulated SMS auto-fill (mock only).
-  bool get isMock => !ref.read(authServiceProvider).isLive;
+  /// True only for [MockAuthService] — not for an unconfigured release build.
+  bool get isMock => ref.read(authServiceProvider) is MockAuthService;
 
   Future<bool> sendOtp(String tenDigitPhone) async {
     state = state.copyWith(sending: true, clearError: true, phone: tenDigitPhone);
