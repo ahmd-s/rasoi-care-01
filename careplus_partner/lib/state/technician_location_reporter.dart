@@ -11,6 +11,12 @@
 // alive for as long as the technician is in the jobs flow (see
 // tech_jobs_screen.dart, whose route is never disposed while job
 // detail/close are pushed on top of it).
+//
+// NOTE: Current implementation uses Timer.periodic which may be paused by the
+// OS when the app is backgrounded. For reliable background tracking, a native
+// Android foreground service would be required, which is beyond the scope of
+// the current Flutter-only architecture. The existing implementation works
+// reliably while the app is in the foreground.
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -92,6 +98,13 @@ class TechnicianLocationReporterVM extends Notifier<bool> {
     } finally {
       _starting = false;
     }
+  }
+
+  /// Public method to manually restart tracking (e.g., after app returns from
+  /// background). This is a no-op if tracking is already running or conditions
+  /// are not met. Call this from app lifecycle observers if needed.
+  Future<void> restartIfEligible() async {
+    _resync();
   }
 
   bool _shouldRun() {

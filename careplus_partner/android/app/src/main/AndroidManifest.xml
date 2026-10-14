@@ -11,6 +11,8 @@
          map — see lib/state/technician_location_reporter.dart. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Android 13+ (API 33+) requires this permission for foreground location access -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Don't block install on devices without a location radio — reporting
          just stays off (permission/service check fails gracefully). -->
     <uses-feature android:name="android.hardware.location" android:required="false" />
