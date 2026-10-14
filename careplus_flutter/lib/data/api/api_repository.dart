@@ -463,7 +463,7 @@ class ApiRepository implements CareRepository {
   Stream<int> etaStream(String bookingId) => _mock.etaStream(bookingId);
 
   List<Booking> get _allBookings =>
-      _realBookings ?? [..._mock.bookings(), ..._mock.bookings(completed: true)];
+      _realBookings ?? const [];
 
   @override
   List<Booking> bookings({BookingStatus? status, bool completed = false}) {

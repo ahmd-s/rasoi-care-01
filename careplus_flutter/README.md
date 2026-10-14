@@ -81,7 +81,7 @@ it (this file is gitignored — never commit it):
 
 ```bash
 keytool -genkey -v -keystore ~/careplus-release.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias careplus
+  -keyalg RSA -keysize 2048 -validity 10000 -alias rasoicare
 ```
 
 Create `android/key.properties`:
@@ -89,7 +89,7 @@ Create `android/key.properties`:
 ```properties
 storePassword=<your password>
 keyPassword=<your password>
-keyAlias=careplus
+keyAlias=rasoicare
 storeFile=/absolute/path/to/careplus-release.jks
 ```
 
