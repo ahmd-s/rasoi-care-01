@@ -110,7 +110,6 @@ class ServiceDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
-  int _tab = 0;
   final Set<String> _selectedIds = {};
   final Set<String> _expandedIncluded = {};
   bool _seeded = false;
@@ -167,14 +166,8 @@ class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
                   const SizedBox(height: 8),
                   Text(detail.blurb, style: context.type.bodyMedium),
                   const SizedBox(height: 22),
-                  _Segmented(
-                    tabs: [t.serviceDetailServicesTab, t.serviceDetailReviewsTab],
-                    index: _tab,
-                    onChanged: (i) => setState(() => _tab = i),
-                  ),
                   const SizedBox(height: 16),
-                  if (_tab == 0) ..._servicesTab(services, t),
-                  if (_tab == 1) ..._reviewsTab(detail, t),
+                  ..._servicesTab(services, t),
                 ],
               ),
             ),
@@ -207,10 +200,6 @@ class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
       ),
     );
   }
-
-  String _thousands(int n) => n
-      .toString()
-      .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
 
   List<Widget> _servicesTab(List<ServiceItem> services, AppLocalizations t) => [
         for (final s in services) ...[
@@ -287,65 +276,6 @@ class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
           const SizedBox(height: 10),
         ],
       ];
-
-  List<Widget> _reviewsTab(ApplianceDetail detail, AppLocalizations t) => [
-        CareCard(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(children: [
-                Text('${detail.rating}',
-                    style: CareType.mono(context.scheme.onSurface,
-                        size: 32, w: FontWeight.w600)),
-                Text('★★★★★',
-                    style: TextStyle(color: context.scheme.secondary, fontSize: 12)),
-                const SizedBox(height: 5),
-                Text(t.serviceDetailRatingsCount(_thousands(detail.ratingCount)),
-                    style: context.type.bodySmall),
-              ]),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  children: [
-                    for (final p in const [0.88, 0.09, 0.02, 0.01, 0.01])
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: ProgressBar(p),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        for (final r in detail.reviews) ...[
-          CareCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Blob(r.initials, size: 34),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.name,
-                          style: const TextStyle(
-                              fontSize: 12.5, fontWeight: FontWeight.w700)),
-                      Text(r.meta, style: context.type.bodySmall),
-                    ],
-                  ),
-                ]),
-                const SizedBox(height: 11),
-                Text(r.quote, style: context.type.bodySmall),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ];
-}
 
 /// A collapsible "What's included" card shown above the services list,
 /// instead of its own tab — tap the header to expand/collapse.
