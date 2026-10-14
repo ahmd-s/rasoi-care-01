@@ -40,7 +40,7 @@
 abstract final class MapsConfig {
   /// Automatically true when a non-empty MAPS_API_KEY is provided at build time.
   /// Gates every real-map/live-location UI element vs. static placeholders.
-  static const isConfigured = apiKey.isNotEmpty;
+  static const isConfigured = apiKey != '';
 
   /// The raw API key for Places Autocomplete and Geocoding REST API calls.
   /// The native GoogleMap widget reads its key from the Android manifest instead.

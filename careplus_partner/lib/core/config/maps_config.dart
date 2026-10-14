@@ -33,6 +33,6 @@
 // - Set up proper API quotas and monitoring
 abstract final class MapsConfig {
   /// Automatically true when a non-empty MAPS_API_KEY is provided at build time.
-  static const isConfigured = apiKey.isNotEmpty;
+  static const isConfigured = apiKey != '';
   static const apiKey = String.fromEnvironment('MAPS_API_KEY', defaultValue: '');
 }

@@ -154,10 +154,6 @@ class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
                   _ApplianceHero(appliance: widget.appliance),
                   const SizedBox(height: 16),
                   Wrap(spacing: 8, children: [
-                    StatusChip(
-                        '★ ${detail.rating} (${_thousands(detail.ratingCount)})',
-                        tone: ChipTone.success,
-                        height: 28),
                     StatusChip(t.serviceDetailAvgDuration(avgDurationMin), height: 28),
                     StatusChip(t.serviceDetailAllBrands, height: 28),
                   ]),
@@ -276,6 +272,7 @@ class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
           const SizedBox(height: 10),
         ],
       ];
+}
 
 /// A collapsible "What's included" card shown above the services list,
 /// instead of its own tab — tap the header to expand/collapse.

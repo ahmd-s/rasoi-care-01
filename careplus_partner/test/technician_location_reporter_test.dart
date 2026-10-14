@@ -1,9 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:care_plus_partner/data/api/api_repository.dart';
 import 'package:care_plus_partner/data/api/booking_dto.dart';
-import 'package:care_plus_partner/data/models.dart';
-import 'package:care_plus_partner/state/providers.dart';
 import 'package:care_plus_partner/state/technician_location_reporter.dart';
 
 void main() {
