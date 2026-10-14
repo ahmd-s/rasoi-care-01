@@ -1,55 +1,49 @@
-// Flip this on once a Google Maps API key exists. Until then every
-// real-map/live-location UI element in the app stays gated off in favor of
-// today's existing static placeholders — the app runs perfectly fine with
-// zero Maps configuration, same "no config, graceful fallback" philosophy
+// Google Maps configuration for the Customer app. Until a valid API key is
+// configured, all real-map/live-location UI elements stay gated off in favor
+// of static placeholders — the app runs perfectly fine with zero Maps
+// configuration, following the same "no config, graceful fallback" philosophy
 // used for Firebase throughout this codebase (grep `Firebase.apps.isEmpty`).
 //
-// To go live once you have a key from the Google Cloud console (enable the
-// "Maps SDK for Android", "Places API" and "Geocoding API" APIs on it):
+// To configure Google Maps:
 //
-//   1. Add the key to `android/local.properties` (already gitignored —
+//   1. Get a Google Maps API key from the Google Cloud console and enable the
+//      following APIs on the project:
+//      - Maps SDK for Android
+//      - Places API
+//      - Geocoding API
+//
+//   2. Add the key to `android/local.properties` (already gitignored —
 //      create the file if it doesn't exist):
 //
 //        MAPS_API_KEY=your-key-here
 //
-//      Then read it into `android/app/build.gradle.kts`'s `defaultConfig`
-//      block and expose it as a manifest placeholder, the same mechanism
-//      already used there for `${applicationName}`:
+//      The Android build.gradle.kts already reads this and exposes it as a
+//      manifest placeholder. AndroidManifest.xml declares the matching
+//      `com.google.android.geo.API_KEY` meta-data tag, defaulting to an empty
+//      string so the app never crashes from a missing manifest entry.
 //
-//        val localProperties = java.util.Properties()
-//        val localPropertiesFile = rootProject.file("local.properties")
-//        if (localPropertiesFile.exists()) {
-//            localProperties.load(java.io.FileInputStream(localPropertiesFile))
-//        }
-//        manifestPlaceholders["mapsApiKey"] =
-//            localProperties.getProperty("MAPS_API_KEY", "")
+//   3. Build with the API key passed as a dart-define for the app's direct
+//      Places/Geocoding HTTP calls (the manifest entry only covers the native
+//      GoogleMap widget itself):
 //
-//      `AndroidManifest.xml` already declares the matching
-//      `com.google.android.geo.API_KEY` meta-data tag sourced from that
-//      placeholder, defaulting to an empty string so the app never crashes
-//      from a missing manifest entry even before a key exists.
+//        flutter run --dart-define=MAPS_API_KEY=your-key-here
+//        flutter build apk --release --dart-define=MAPS_API_KEY=your-key-here
 //
-//   2. Rebuild with the flag below flipped on, and the same key passed
-//      through for the app's direct Places/Geocoding HTTP calls (the
-//      manifest entry above only covers the native `GoogleMap` widget
-//      itself, not those REST calls):
+// The [isConfigured] flag automatically reflects whether a non-empty API key
+// was provided at build time. No manual MAPS_CONFIGURED flag is needed.
 //
-//        flutter run --dart-define=MAPS_CONFIGURED=true --dart-define=MAPS_API_KEY=your-key-here
-//
-// Nothing else needs to change — every `GoogleMap`/marker/Places widget in
-// this app is already written and simply waits behind `isConfigured`.
+// Owner-side configuration still required:
+// - Set up Google Cloud project with billing enabled
+// - Enable required APIs (Maps SDK for Android, Places API, Geocoding API)
+// - Configure API key restrictions (Android package name, SHA-1 fingerprint)
+// - Set up proper API quotas and monitoring
 abstract final class MapsConfig {
-  /// Flip to true once a Google Maps API key is set up (see above) —
-  /// gates every real-map/live-location UI element vs. the existing
-  /// static placeholder. Mirrors the Firebase.apps.isEmpty fallback
-  /// pattern used throughout this codebase.
-  static const isConfigured =
-      bool.fromEnvironment('MAPS_CONFIGURED', defaultValue: false);
+  /// Automatically true when a non-empty MAPS_API_KEY is provided at build time.
+  /// Gates every real-map/live-location UI element vs. static placeholders.
+  static const isConfigured = apiKey.isNotEmpty;
 
-  /// The raw API key, for the address picker's direct HTTP calls to the
-  /// Places Autocomplete and Geocoding REST APIs (the native `GoogleMap`
-  /// widget instead reads its own key straight from the Android manifest —
-  /// see above). Empty until passed at build time; every call site checks
-  /// [isConfigured] first, so an empty key is never actually used.
+  /// The raw API key for Places Autocomplete and Geocoding REST API calls.
+  /// The native GoogleMap widget reads its key from the Android manifest instead.
+  /// Empty until passed at build time; every call site checks [isConfigured] first.
   static const apiKey = String.fromEnvironment('MAPS_API_KEY', defaultValue: '');
 }
