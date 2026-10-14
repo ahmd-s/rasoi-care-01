@@ -41,9 +41,56 @@ jobs:
         # any finding (including unfixed ones, reported as errors)
         run: pip-audit -r requirements.txt --strict
 
+  # Flutter quality gate (P2-11) — runs BEFORE any APK is built or released:
+  # flutter pub get, flutter analyze, and flutter test across the three native Flutter apps.
+  # Also generates and archives pubspec.lock files as artifacts for inspection.
+  flutter-tests:
+    name: Flutter test & analyze (${{ matrix.app }})
+    needs: backend-tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - careplus_flutter
+          - careplus_partner
+          - careplus_admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.44.7"
+          cache: true
+
+      - name: flutter pub get
+        working-directory: ${{ matrix.app }}
+        run: flutter pub get
+
+      - name: flutter analyze
+        working-directory: ${{ matrix.app }}
+        run: flutter analyze
+
+      - name: flutter test
+        working-directory: ${{ matrix.app }}
+        run: flutter test
+
+      - name: Upload pubspec.lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-pubspec-lock
+          path: ${{ matrix.app }}/pubspec.lock
+          retention-days: 30
+
   build:
     name: Build ${{ matrix.app }}
-    needs: backend-tests
+    needs: [backend-tests, flutter-tests]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -66,6 +113,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.44.7"
           cache: true
 
       - name: flutter pub get
