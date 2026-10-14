@@ -710,11 +710,11 @@ class _TechJobScreenState extends ConsumerState<TechJobScreen> {
                       _ActionTile(
                           glyph: '💬',
                           label: t.jobDetailChat,
-                          onTap: () => context.push('/tech/soon', extra: t.jobDetailChat)),
+                          onTap: () => context.push('/tech/help')),
                       _ActionTile(
                           glyph: '⚑',
                           label: t.jobDetailEscalate,
-                          onTap: () => context.push('/tech/soon', extra: t.jobDetailEscalate)),
+                          onTap: () => context.push('/tech/help')),
                     ],
                   ),
                   const SizedBox(height: 12),
