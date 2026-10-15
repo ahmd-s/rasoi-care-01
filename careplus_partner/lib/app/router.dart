@@ -14,6 +14,8 @@ import '../features/jobs/tech_shifts_screen.dart';
 import '../features/jobs/tech_job_screen.dart';
 import '../features/jobs/tech_close_screen.dart';
 import '../features/jobs/airflow_check_screen.dart';
+import '../features/passport/kitchen_passport_screen.dart';
+import '../features/passport/register_appliance_screen.dart';
 import '../features/support/coming_soon_screen.dart';
 import '../features/support/language_screen.dart';
 import '../features/support/tech_help_screen.dart';
@@ -89,6 +91,16 @@ final router = GoRouter(
           suctionAfter: extra?.$2,
         );
       },
+    ),
+    GoRoute(
+      path: '/tech/job/:id/kitchen',
+      parentNavigatorKey: _rootKey,
+      builder: (_, s) => KitchenPassportScreen(jobId: s.pathParameters['id']!),
+    ),
+    GoRoute(
+      path: '/tech/job/:id/kitchen/register',
+      parentNavigatorKey: _rootKey,
+      builder: (_, s) => RegisterApplianceScreen(jobId: s.pathParameters['id']!),
     ),
     GoRoute(
       path: '/tech/job/:id/airflow',

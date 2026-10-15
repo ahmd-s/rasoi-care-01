@@ -27,6 +27,7 @@ import jwt
 from flask import Flask, request, jsonify, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 import database
+import kitchen_passport
 from database import get_db, init_db, next_id, now, new_uuid_id
 
 # ---------------------------------------------------------------- worker mode
@@ -4203,6 +4204,247 @@ def update_booking_appliance(booking_id):
     parts = fetch_booking_parts(conn, booking_id)
     conn.close()
     return jsonify(booking_row_to_dict(row, parts=parts))
+
+
+# ---------------------------------------------------------------- kitchen passport (V9.7)
+def kitchen_appliance_row_to_dict(row):
+    try:
+        specs = json.loads(row["specs"] or "{}")
+    except ValueError:
+        specs = {}
+    return {
+        "id": row["id"],
+        "category": row["category"],
+        "brand": row["brand"],
+        "model": row["model"],
+        "serialNumber": row["serial_number"],
+        "installYear": row["install_year"],
+        "specs": specs,
+        "notes": row["notes"],
+        "createdAt": row["created_at"],
+    }
+
+
+def _assigned_booking_customer(conn, booking_id, *, for_write=False):
+    """The customer's user id for a booking assigned to the calling
+    technician, else (None, error response). 404 for both "no such booking"
+    and "someone else's booking" so ids can't be enumerated, matching the
+    other booking-scoped technician routes. Reading the passport stays
+    allowed on any assigned booking (including Completed/Cancelled ones);
+    `for_write` additionally refuses a closed booking."""
+    row = conn.execute(
+        "SELECT user_id, technician_id, status FROM bookings WHERE id = ?", (booking_id,)
+    ).fetchone()
+    if not row or row["technician_id"] != request.technician["id"]:
+        return None, (jsonify({"error": "not found"}), 404)
+    if not row["user_id"]:
+        return None, (jsonify({"error": "This booking has no associated customer account"}), 400)
+    if for_write and row["status"] in kitchen_passport.CLOSED_BOOKING_STATUSES:
+        return None, (jsonify({
+            "error": "Conflict", "code": "booking_closed",
+            "message": f"This booking is {row['status'].lower()}; appliances can no longer be registered on it.",
+        }), 409)
+    return row["user_id"], None
+
+
+def _kitchen_conflict(code, message):
+    return jsonify({"error": "Conflict", "code": code, "message": message}), 409
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen", methods=["GET"])
+@require_technician_auth
+def technician_booking_kitchen(booking_id):
+    """Appliances already registered in the customer's Kitchen Passport, for
+    the customer of a booking assigned to this technician."""
+    conn = get_db()
+    user_id, err = _assigned_booking_customer(conn, booking_id)
+    if err:
+        conn.close()
+        return err
+    rows = conn.execute(
+        "SELECT * FROM kitchen_appliances WHERE user_id = ? ORDER BY created_at, id", (user_id,)
+    ).fetchall()
+    conn.close()
+    return jsonify({"appliances": [kitchen_appliance_row_to_dict(r) for r in rows]})
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances", methods=["POST"])
+@require_technician_auth
+def technician_register_kitchen_appliance(booking_id):
+    """Registers an appliance in the booking customer's passport.
+
+    Duplicate handling: a retried submit (same `clientRequestId`, which the
+    Partner app generates once per form) returns the already-created record
+    with 200 instead of a second row; a serial number already registered for
+    this customer + category is a 409. Two units of the same brand/model
+    without a serial number are deliberately allowed — they can be genuine
+    (two identical microwaves)."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request", "message": "Request body must be a JSON object"}), 400
+    clean, errors = kitchen_passport.validate_registration(data)
+    if errors:
+        return jsonify({"error": "Invalid request", "fields": errors}), 400
+    conn = get_db()
+    user_id, err = _assigned_booking_customer(conn, booking_id, for_write=True)
+    if err:
+        conn.close()
+        return err
+    tech_id = request.technician["id"]
+    rid = clean["client_request_id"]
+
+    def _by_request_id():
+        if not rid:
+            return None
+        return conn.execute(
+            "SELECT * FROM kitchen_appliances WHERE registered_by = ? AND client_request_id = ?",
+            (tech_id, rid),
+        ).fetchone()
+
+    def _replay(row):
+        if row["user_id"] != user_id:
+            return _kitchen_conflict(
+                "request_id_reused", "This request id was already used for a different customer.")
+        return jsonify(kitchen_appliance_row_to_dict(row)), 200
+
+    existing = _by_request_id()
+    if existing:
+        conn.close()
+        return _replay(existing)
+
+    appliance_id = new_uuid_id("KAPP")
+    # One statement: insert only while the customer is under the cap, and let
+    # the unique indexes (serial, request id) turn a duplicate into a no-op,
+    # so concurrent requests can't slip past a separate count/exists check.
+    cur = conn.execute(
+        "INSERT INTO kitchen_appliances (id, user_id, category, brand, model, serial_number, "
+        "install_year, specs, notes, registered_by, booking_id, serial_key, client_request_id, created_at) "
+        "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? "
+        "WHERE (SELECT COUNT(*) FROM kitchen_appliances WHERE user_id = ?) < ? "
+        "ON CONFLICT DO NOTHING",
+        (
+            appliance_id, user_id, clean["category"], clean["brand"], clean["model"],
+            clean["serial_number"], clean["install_year"], json.dumps(clean["specs"], sort_keys=True),
+            clean["notes"], tech_id, booking_id, clean["serial_key"], rid, now(),
+            user_id, kitchen_passport.MAX_APPLIANCES_PER_CUSTOMER,
+        ),
+    )
+    created = cur.rowcount == 1
+    conn.commit()
+    if created:
+        row = conn.execute("SELECT * FROM kitchen_appliances WHERE id = ?", (appliance_id,)).fetchone()
+        conn.close()
+        return jsonify(kitchen_appliance_row_to_dict(row)), 201
+    # Nothing inserted: work out why (request-id race, duplicate serial, or cap).
+    raced = _by_request_id()
+    if raced:
+        conn.close()
+        return _replay(raced)
+    if clean["serial_key"]:
+        dup = conn.execute(
+            "SELECT id FROM kitchen_appliances WHERE user_id = ? AND category = ? AND serial_key = ?",
+            (user_id, clean["category"], clean["serial_key"]),
+        ).fetchone()
+        if dup:
+            conn.close()
+            return _kitchen_conflict(
+                "duplicate_appliance",
+                "An appliance with this serial number is already registered for this customer.")
+    conn.close()
+    return _kitchen_conflict(
+        "appliance_limit_reached",
+        f"A customer can have at most {kitchen_passport.MAX_APPLIANCES_PER_CUSTOMER} registered appliances.")
+
+
+@app.route("/api/technician/custom-brands", methods=["GET"])
+@require_technician_auth
+def list_custom_brands():
+    category = request.args.get("category")
+    if category is not None and category not in kitchen_passport.CATEGORIES:
+        return jsonify({"error": "Invalid request", "fields": {"category": "is not a known appliance category"}}), 400
+    conn = get_db()
+    if category:
+        rows = conn.execute(
+            "SELECT * FROM custom_brands WHERE technician_id = ? AND category = ? ORDER BY name_key",
+            (request.technician["id"], category),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM custom_brands WHERE technician_id = ? ORDER BY category, name_key",
+            (request.technician["id"],),
+        ).fetchall()
+    conn.close()
+    return jsonify({"brands": [{"id": r["id"], "category": r["category"], "name": r["name"]} for r in rows]})
+
+
+@app.route("/api/technician/custom-brands", methods=["POST"])
+@require_technician_auth
+def add_custom_brand():
+    """Saves a brand the technician typed via Add Brand so it's offered again
+    for that appliance category. Idempotent: re-adding the same name (any
+    case) returns the existing row with 200 instead of a duplicate."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request", "message": "Request body must be a JSON object"}), 400
+    errors = {}
+    category = data.get("category")
+    if category not in kitchen_passport.CATEGORIES:
+        errors["category"] = "must be one of: " + ", ".join(kitchen_passport.CATEGORIES)
+    msg = kitchen_passport.validate_brand_name(data.get("name"))
+    if msg:
+        errors["name"] = msg
+    if errors:
+        return jsonify({"error": "Invalid request", "fields": errors}), 400
+    name = kitchen_passport.normalise_brand_name(data["name"])
+    key = kitchen_passport.brand_key(name)
+    tech_id = request.technician["id"]
+    conn = get_db()
+
+    def _find():
+        return conn.execute(
+            "SELECT * FROM custom_brands WHERE technician_id = ? AND category = ? AND name_key = ?",
+            (tech_id, category, key),
+        ).fetchone()
+
+    def _reply(row, status):
+        return jsonify({"id": row["id"], "category": row["category"], "name": row["name"]}), status
+
+    existing = _find()
+    if existing:
+        conn.close()
+        return _reply(existing, 200)
+    # Insert only while under the cap; the unique key makes a concurrent
+    # duplicate a no-op that the re-read below turns into a 200.
+    cur = conn.execute(
+        "INSERT INTO custom_brands (id, technician_id, category, name, name_key, created_at) "
+        "SELECT ?,?,?,?,?,? "
+        "WHERE (SELECT COUNT(*) FROM custom_brands WHERE technician_id = ?) < ? "
+        "ON CONFLICT DO NOTHING",
+        (new_uuid_id("KBRAND"), tech_id, category, name, key, now(),
+         tech_id, kitchen_passport.MAX_CUSTOM_BRANDS_PER_TECHNICIAN),
+    )
+    created = cur.rowcount == 1
+    conn.commit()
+    row = _find()
+    conn.close()
+    if row:
+        return _reply(row, 201 if created else 200)
+    return _kitchen_conflict(
+        "brand_limit_reached",
+        f"You can save at most {kitchen_passport.MAX_CUSTOM_BRANDS_PER_TECHNICIAN} custom brands.")
+
+
+@app.route("/api/kitchen-passport", methods=["GET"])
+@require_auth
+def get_kitchen_passport():
+    """The signed-in customer's own registered appliances."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM kitchen_appliances WHERE user_id = ? ORDER BY created_at, id",
+        (request.user["id"],),
+    ).fetchall()
+    conn.close()
+    return jsonify({"appliances": [kitchen_appliance_row_to_dict(r) for r in rows]})
 
 
 @app.route("/api/technician/bookings/<booking_id>/service", methods=["PATCH"])

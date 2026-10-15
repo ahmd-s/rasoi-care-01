@@ -788,6 +788,21 @@ class _TechJobScreenState extends ConsumerState<TechJobScreen> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 12),
+                  CareCard(
+                    onTap: () => context.push('/tech/job/${widget.jobId}/kitchen'),
+                    child: Row(
+                      children: [
+                        Text('▤', style: TextStyle(fontSize: 22, color: context.scheme.primary)),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text('Kitchen Passport',
+                              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                        ),
+                        Icon(Icons.chevron_right, color: context.care.inkFaint),
+                      ],
+                    ),
+                  ),
                   SectionHeader(t.jobDetailApplianceDetails),
                   CareCard(
                     child: Column(

@@ -246,6 +246,45 @@ CREATE TABLE IF NOT EXISTS hs_profile (
     name    TEXT NOT NULL DEFAULT '',
     plan    TEXT
 );
+
+-- Kitchen Passport (V9.7). kitchen_appliances are the customer's *own*
+-- registered units (distinct from `appliances`, the service catalogue);
+-- see kitchen_passport.py for the category ids and `specs` fields.
+CREATE TABLE IF NOT EXISTS kitchen_appliances (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id),
+    category        TEXT NOT NULL,
+    brand           TEXT NOT NULL,
+    model           TEXT NOT NULL DEFAULT '',
+    serial_number   TEXT NOT NULL DEFAULT '',
+    install_year    INTEGER,
+    specs           TEXT NOT NULL DEFAULT '{}',
+    notes           TEXT NOT NULL DEFAULT '',
+    registered_by   TEXT NOT NULL REFERENCES technicians(id),
+    booking_id      TEXT,
+    -- Duplicate identity (see kitchen_passport.py): a serial number is unique
+    -- per customer + category (serial_key = case/space-folded, '' when none),
+    -- and client_request_id makes a retried submit idempotent per technician.
+    serial_key        TEXT NOT NULL DEFAULT '',
+    client_request_id TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchen_appliance_serial
+    ON kitchen_appliances (user_id, category, serial_key) WHERE serial_key <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchen_appliance_request
+    ON kitchen_appliances (registered_by, client_request_id) WHERE client_request_id <> '';
+
+-- Brands a technician added via "Add Brand", reusable for that appliance
+-- category. name_key is the case-folded name so "bosch" and "Bosch" collide.
+CREATE TABLE IF NOT EXISTS custom_brands (
+    id              TEXT PRIMARY KEY,
+    technician_id   TEXT NOT NULL REFERENCES technicians(id),
+    category        TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    name_key        TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(technician_id, category, name_key)
+);
 """
 
 APPLIANCES_SEED = [

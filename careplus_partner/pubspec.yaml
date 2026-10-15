@@ -76,10 +76,11 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  # Bundled so google_fonts resolves these without a network fetch (tests run
+  # with allowRuntimeFetching = false). Names must match google_fonts'
+  # "<Family>-<Weight>.ttf" convention; add a file per weight the screens use.
+  assets:
+    - assets/google_fonts/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

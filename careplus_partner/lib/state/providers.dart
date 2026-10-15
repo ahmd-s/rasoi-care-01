@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/api/api_repository.dart';
+import '../data/api/passport_api.dart';
 import '../data/local/biometric_service.dart';
 import '../data/repository.dart';
 import '../features/jobs/airflow_check_screen.dart';
@@ -191,4 +192,25 @@ class LocaleVM extends Notifier<Locale> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, locale.languageCode);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Kitchen Passport (V9.7) — see lib/features/passport.
+// ---------------------------------------------------------------------------
+final passportApiProvider = Provider<PassportApi>((ref) => PassportApi());
+
+/// Appliances already registered for the customer of job [jobId]. Errors
+/// carry a user-presentable message (see PassportApi).
+final kitchenAppliancesProvider = FutureProvider.autoDispose
+    .family<List<KitchenAppliance>, String>((ref, jobId) async {
+  final r = await ref.watch(passportApiProvider).kitchenFor(jobId);
+  if (!r.ok) throw PassportException(r.error!);
+  return r.value!;
+});
+
+class PassportException implements Exception {
+  const PassportException(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }
