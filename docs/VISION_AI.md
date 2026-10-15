@@ -1,9 +1,10 @@
-# Vision AI inspection — Stage A (plumbing only)
+# Vision AI inspection — Stage B (OpenAI provider)
 
-Status: **no real AI provider is integrated.** Stage A adds the server-side
-plumbing, guardrails and tests, exercised only with a deterministic fake
-provider. With default configuration AI is **off**: every submission is refused
-with `503 ai_unavailable` and the Kitchen Health scores stay technician-only.
+Status: **OpenAI Vision adapter is implemented; real calls remain off by
+default.** The adapter uses the server-side Responses API, structured JSON
+output, and the existing validation pipeline. With default configuration AI is
+off: every submission is refused with `503 ai_unavailable` and Kitchen Health
+scores stay technician-only.
 
 Not in this stage: Flutter photo capture/review UI, technician acceptance, and
 any change to the Kitchen Health formula. `aiScore` and `combinedScore` in the
@@ -13,7 +14,10 @@ health endpoints remain `null`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VISION_AI_PROVIDER` | unset | Selects a provider. Unset or unknown → AI disabled. No real provider exists yet. |
+| `VISION_AI_PROVIDER` | unset | Selects a provider. Unset or unknown → AI disabled. |
+| `VISION_AI_ENABLED` | unset | Must be exactly `1` to make the OpenAI provider selectable. This is a separate explicit operator opt-in. |
+| `OPENAI_API_KEY` | unset | Required server secret. Never place it in Flutter, source control, logs, or `render.yaml`. |
+| `OPENAI_VISION_MODEL` | `gpt-4.1-mini` | Server-side model name; use a model that supports image input and Structured Outputs. |
 | `RASOI_ALLOW_FAKE_VISION` | unset | Must be `1` before the `fake` provider can be selected (tests / local demos only). |
 | `VISION_AI_KILL_SWITCH` | unset | `1` disables AI immediately, whatever else is set. Takes effect on restart of the process environment. |
 | `VISION_AI_MAX_SUBMISSIONS_PER_VISIT` | `3` | Per appliance per visit (provisional). |
@@ -25,15 +29,25 @@ health endpoints remain `null`.
 | `VISION_AI_MAX_RUNTIME_SECONDS` | `180` | Hard cap on one job's running time. |
 | `VISION_AI_MAX_IMAGE_BYTES` / `_MAX_TOTAL_BYTES` / `_MAX_PIXELS` / `_MAX_DIMENSION` | 1.5 MB / 6 MB / 24 MP / 8000 px | Upload limits. |
 
-A real provider's credentials must be **server environment variables only**
-(like `HTTPSMS_API_KEY`). They must never appear in the Flutter apps, in the
-repository, in `render.yaml` values, in logs or in any API response. These
-variables are intentionally **not** added to `render.yaml`: production
-configuration is unchanged by Stage A.
+To opt in on a non-production server, set `VISION_AI_ENABLED=1`,
+`VISION_AI_PROVIDER=openai`, and `OPENAI_API_KEY` in that server's secret
+configuration. Missing any required setting leaves the provider disabled. The
+kill switch (`VISION_AI_KILL_SWITCH=1`) disables it immediately. These values
+are intentionally **not** added to `render.yaml`; no deployment configuration
+or production service is changed by this implementation.
 
-There is **no monetary spending cap**. Limits are counts of analyses. A
-spend cap needs a chosen provider's real pricing and has not been implemented
-or tested; do not describe the limits above as one.
+The adapter sends in-memory, metadata-stripped JPEGs to OpenAI with `store=false`
+and image detail `auto`. It accepts at most five images / 6 MB combined, caps
+the JSON response at 1,200 output tokens, and bounds each HTTP call by the
+configured provider timeout (maximum 60 seconds). SDK automatic retries are
+disabled; the job worker owns retries and its request budget. The existing
+guardrail validator still checks every returned string and produces all labels,
+recommendations, limitations, and scores on the server.
+
+There is **no monetary spending cap**. Limits are counts of analyses. Each
+attempt, including a retry or malformed-response re-ask, can incur provider
+cost. Set a conservative global daily count limit and monitor provider usage;
+do not describe the count limit as a monetary cap.
 
 ## Endpoints (technician Firebase auth, assigned booking required)
 
@@ -152,8 +166,8 @@ original upload, the validated result and job metadata are stored.
   (`database.now()`), not the database clock. Instances with clocks skewed by a
   large fraction of the stale period (default 120 s) could misjudge a peer's
   jobs; Render instances are NTP-synced, and the margin is generous.
-- Real provider adapters, Flutter capture/review UI, technician acceptance and
-  the combined health score are later stages.
+- Flutter capture/review UI, technician acceptance and the combined health
+  score are later stages.
 - Jobs in flight when the process dies are lost (see above). A job that was
   queued but never started is failed after the hard runtime cap instead of
   waiting forever.

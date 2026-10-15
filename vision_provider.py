@@ -1,6 +1,6 @@
-"""Vision AI — provider interface and the deterministic fake (Stage A).
+"""Vision AI — provider interface, OpenAI adapter and deterministic fake.
 
-No real provider is integrated. A provider is a small object with
+Each provider is a small object with
 `analyze(request) -> dict` that returns the *parsed JSON* of a model reply
 (shape: vision_guardrails.RESPONSE_SCHEMA); everything it returns is untrusted
 and is validated by vision_guardrails before anything is stored or shown.
@@ -16,12 +16,12 @@ Configuration (environment, server-side only; never in the Flutter apps):
                             real deployment (same pattern as
                             RASOI_ALLOW_DEFAULT_STAFF_PIN).
 
-A real provider adapter must: read its credentials from the server
-environment only, set a socket timeout no longer than `timeout_seconds`, raise
-ProviderTransientError for timeouts / 429 / 5xx, ProviderPermanentError for
-authentication, billing or request-rejected errors, and never log image
-bytes, keys or raw replies.
+The OpenAI adapter reads credentials from the server environment only, uses
+the Responses API with structured JSON output, bounds request size and time,
+and never logs image bytes, keys or raw replies.
 """
+import base64
+import json
 import os
 
 from vision_guardrails import CODES, PROFILES
@@ -98,10 +98,113 @@ class FakeProvider(VisionProvider):
         return valid_fake_response(request.category, len(request.images))
 
 
+class OpenAIProvider(VisionProvider):
+    """OpenAI Responses API adapter. Imports the SDK lazily so deployments
+    with AI disabled do not need to initialize a client or read credentials."""
+
+    name = "openai"
+    model = "gpt-4.1-mini"
+    MAX_IMAGES = 5
+    MAX_TOTAL_IMAGE_BYTES = 6_000_000
+    MAX_OUTPUT_TOKENS = 1200
+
+    def __init__(self, *, client=None):
+        self._client = client
+
+    @staticmethod
+    def _structured_schema(schema):
+        """Return the strict subset accepted by Structured Outputs. The
+        application validator remains authoritative for dropped bounds."""
+        schema = json.loads(json.dumps(schema))
+
+        def clean(node):
+            if isinstance(node, dict):
+                for key in ("minimum", "maximum", "minLength", "maxLength", "minItems"):
+                    node.pop(key, None)
+                for value in node.values():
+                    clean(value)
+            elif isinstance(node, list):
+                for value in node:
+                    clean(value)
+        clean(schema)
+        return schema
+
+    def _client_or_create(self, timeout):
+        if self._client is not None:
+            return self._client
+        server_credential = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not server_credential:
+            raise ProviderPermanentError("provider unavailable")
+        try:
+            from openai import OpenAI
+            self._client = OpenAI(api_key=server_credential, timeout=timeout, max_retries=0)
+        except Exception as exc:
+            # Do not expose SDK exception strings; they may contain headers.
+            raise ProviderPermanentError("provider unavailable") from exc
+        return self._client
+
+    def analyze(self, request):
+        if not request.images or len(request.images) > self.MAX_IMAGES:
+            raise ProviderPermanentError("invalid request")
+        if sum(len(image) for image in request.images) > self.MAX_TOTAL_IMAGE_BYTES:
+            raise ProviderPermanentError("invalid request")
+        timeout = max(0.1, min(float(request.timeout_seconds), 60.0))
+        model = os.environ.get("OPENAI_VISION_MODEL", self.model).strip()
+        if not model or len(model) > 100:
+            raise ProviderPermanentError("invalid configuration")
+        client = self._client_or_create(timeout)
+        content = [{"type": "input_text", "text": request.prompt}]
+        for image in request.images:
+            encoded = base64.b64encode(image).decode("ascii")
+            content.append({"type": "input_image", "image_url": f"data:image/jpeg;base64,{encoded}",
+                            "detail": "auto"})
+        try:
+            response = client.responses.create(
+                model=model,
+                input=[{"role": "user", "content": content}],
+                text={"format": {"type": "json_schema", "name": "rasoi_visual_inspection",
+                                  "strict": True, "schema": self._structured_schema(request.schema)}},
+                max_output_tokens=self.MAX_OUTPUT_TOKENS,
+                store=False,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            self._raise_safe_provider_error(exc)
+        output_text = getattr(response, "output_text", None)
+        if not isinstance(output_text, str):
+            output_text = ""
+        try:
+            parsed = json.loads(output_text)
+        except (TypeError, ValueError):
+            # Let the existing structural validator trigger its one bounded
+            # re-ask; do not bypass that recovery path here.
+            return output_text
+        return parsed
+
+    @staticmethod
+    def _raise_safe_provider_error(exc):
+        """Classify SDK errors by type/status without returning their text."""
+        try:
+            import openai
+            if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
+                raise ProviderTransientError("provider temporarily unavailable") from exc
+            if isinstance(exc, openai.APIStatusError):
+                status = exc.status_code
+                if status == 429 or status >= 500 or status in (408, 409):
+                    raise ProviderTransientError("provider temporarily unavailable") from exc
+                raise ProviderPermanentError("provider rejected request") from exc
+        except ImportError:
+            pass
+        # Tests and SDK-version-specific exceptions are handled conservatively.
+        raise ProviderPermanentError("provider unavailable") from exc
+
+
 def _registry():
     registry = {}
     if os.environ.get("RASOI_ALLOW_FAKE_VISION") == "1":
         registry["fake"] = FakeProvider
+    if os.environ.get("VISION_AI_ENABLED") == "1" and os.environ.get("OPENAI_API_KEY", "").strip():
+        registry["openai"] = OpenAIProvider
     return registry
 
 
