@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:care_plus_partner/data/api/passport_api.dart';
+import 'package:care_plus_partner/features/passport/inspection_catalog.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -130,5 +131,77 @@ void main() {
         }))).register('B-1', {});
     expect(dup.ok, isFalse);
     expect(dup.error, contains('serial number is already registered'));
+  });
+
+  group('inspection', () {
+    final body = {
+      'applianceId': 'KAPP-1',
+      'category': 'hob',
+      'bookingId': 'B-1',
+      'checks': [
+        {'key': 'ignition', 'label': 'Ignition', 'result': 'attention', 'note': 'slow', 'updatedAt': 't'},
+        {'key': 'gas_flow', 'label': 'Gas flow', 'result': null, 'note': '', 'updatedAt': null},
+      ],
+    };
+
+    test('inspectionFor maps results, leaving unrecorded items null', () async {
+      late http.BaseRequest seen;
+      final r = await _api(MockClient((req) async {
+        seen = req;
+        return _json(200, body);
+      })).inspectionFor('B-1', 'KAPP-1');
+      expect(r.ok, isTrue);
+      expect(seen.method, 'GET');
+      expect(seen.url.path, '/api/technician/bookings/B-1/kitchen/appliances/KAPP-1/inspection');
+      final checks = r.value!.checks;
+      expect(checks[0].result, InspectionResult.attention);
+      expect(checks[0].note, 'slow');
+      expect(checks[1].result, isNull);
+      expect(r.value!.category, 'hob');
+    });
+
+    test('saveInspection PUTs wire values and omits empty notes', () async {
+      late http.Request seen;
+      final r = await _api(MockClient((req) async {
+        seen = req;
+        return _json(200, body);
+      })).saveInspection('B-1', 'KAPP-1', [
+        (key: 'ignition', result: InspectionResult.attention, note: 'slow'),
+        (key: 'gas_flow', result: InspectionResult.good, note: ''),
+      ]);
+      expect(r.ok, isTrue);
+      expect(seen.method, 'PUT');
+      expect(jsonDecode(seen.body), {
+        'results': [
+          {'key': 'ignition', 'result': 'attention', 'note': 'slow'},
+          {'key': 'gas_flow', 'result': 'good'},
+        ],
+      });
+      expect(seen.headers['Authorization'], 'Bearer tok');
+    });
+
+    test('closed booking, not found and validation errors surface a message', () async {
+      final closed = await _api(MockClient((_) async => _json(409, {
+            'error': 'Conflict',
+            'code': 'booking_closed',
+            'message': 'This booking is completed; appliances can no longer be registered on it.',
+          }))).saveInspection('B-1', 'KAPP-1', [
+        (key: 'ignition', result: InspectionResult.good, note: ''),
+      ]);
+      expect(closed.ok, isFalse);
+      expect(closed.error, contains('completed'));
+
+      final missing = await _api(MockClient((_) async => _json(404, {'error': 'not found'})))
+          .inspectionFor('B-1', 'KAPP-9');
+      expect(missing.error, contains('no longer assigned'));
+
+      final invalid = await _api(MockClient((_) async => _json(400, {
+            'error': 'Invalid request',
+            'fields': {'results[0].result': 'must be one of: good, attention, not_tested'},
+          }))).saveInspection('B-1', 'KAPP-1', [
+        (key: 'ignition', result: InspectionResult.good, note: ''),
+      ]);
+      expect(invalid.error, contains('results[0].result'));
+    });
   });
 }

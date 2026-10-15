@@ -4356,6 +4356,100 @@ def technician_register_kitchen_appliance(booking_id):
         f"A customer can have at most {kitchen_passport.MAX_APPLIANCES_PER_CUSTOMER} registered appliances.")
 
 
+def _inspection_appliance(conn, booking_id, appliance_id, *, for_write):
+    """(user_id, appliance row, error) for an inspection route. The booking
+    must be assigned to the caller (and open, for writes), and the appliance
+    must belong to that booking's customer — otherwise 404, so appliance ids
+    of other customers can't be probed through a booking of your own."""
+    user_id, err = _assigned_booking_customer(conn, booking_id, for_write=for_write)
+    if err:
+        return None, None, err
+    appliance = conn.execute(
+        "SELECT * FROM kitchen_appliances WHERE id = ? AND user_id = ?", (appliance_id, user_id)
+    ).fetchone()
+    if not appliance:
+        return None, None, (jsonify({"error": "not found"}), 404)
+    return user_id, appliance, None
+
+
+def _inspection_payload(conn, booking_id, appliance):
+    category = appliance["category"]
+    rows = conn.execute(
+        "SELECT check_key, result, note, updated_at FROM kitchen_inspection_checks "
+        "WHERE appliance_id = ? AND booking_id = ?",
+        (appliance["id"], booking_id),
+    ).fetchall()
+    saved = {r["check_key"]: r for r in rows}
+    return {
+        "applianceId": appliance["id"],
+        "category": category,
+        "bookingId": booking_id,
+        "checks": [
+            {
+                "key": key,
+                "label": label,
+                "result": saved[key]["result"] if key in saved else None,
+                "note": saved[key]["note"] if key in saved else "",
+                "updatedAt": saved[key]["updated_at"] if key in saved else None,
+            }
+            for key, label in kitchen_passport.CHECKLISTS[category]
+        ],
+    }
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/inspection",
+           methods=["GET"])
+@require_technician_auth
+def get_kitchen_inspection(booking_id, appliance_id):
+    """The category's checklist with whatever results this visit has saved so
+    far (result null = not yet recorded). Readable on any assigned booking."""
+    conn = get_db()
+    _uid, appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=False)
+    if err:
+        conn.close()
+        return err
+    payload = _inspection_payload(conn, booking_id, appliance)
+    conn.close()
+    return jsonify(payload)
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/inspection",
+           methods=["PUT"])
+@require_technician_auth
+def save_kitchen_inspection(booking_id, appliance_id):
+    """Upserts checklist results for this appliance on this visit (booking).
+    Partial saves are fine; items not in the body are left as they were.
+    Refused on Completed/Cancelled bookings like registration is."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request", "message": "Request body must be a JSON object"}), 400
+    conn = get_db()
+    _uid, appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=True)
+    if err:
+        conn.close()
+        return err
+    rows, errors = kitchen_passport.validate_inspection(appliance["category"], data)
+    if errors:
+        conn.close()
+        return jsonify({"error": "Invalid request", "fields": errors}), 400
+    stamp = now()
+    for key, result, note in rows:
+        conn.execute(
+            "INSERT INTO kitchen_inspection_checks "
+            "(id, appliance_id, booking_id, technician_id, check_key, result, note, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT (appliance_id, booking_id, check_key) DO UPDATE SET "
+            "result = excluded.result, note = excluded.note, "
+            "technician_id = excluded.technician_id, updated_at = excluded.updated_at",
+            (new_uuid_id("KCHK"), appliance_id, booking_id, request.technician["id"],
+             key, result, note, stamp),
+        )
+    conn.commit()
+    payload = _inspection_payload(conn, booking_id, appliance)
+    conn.close()
+    return jsonify(payload)
+
+
 @app.route("/api/technician/custom-brands", methods=["GET"])
 @require_technician_auth
 def list_custom_brands():

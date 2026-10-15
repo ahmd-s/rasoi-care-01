@@ -274,6 +274,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchen_appliance_serial
 CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchen_appliance_request
     ON kitchen_appliances (registered_by, client_request_id) WHERE client_request_id <> '';
 
+-- One row per checklist item per appliance per visit (a booking is the
+-- visit). Saving again updates the row. See kitchen_passport.CHECKLISTS.
+CREATE TABLE IF NOT EXISTS kitchen_inspection_checks (
+    id              TEXT PRIMARY KEY,
+    appliance_id    TEXT NOT NULL REFERENCES kitchen_appliances(id),
+    booking_id      TEXT NOT NULL REFERENCES bookings(id),
+    technician_id   TEXT NOT NULL REFERENCES technicians(id),
+    check_key       TEXT NOT NULL,
+    result          TEXT NOT NULL,
+    note            TEXT NOT NULL DEFAULT '',
+    updated_at      TEXT NOT NULL,
+    UNIQUE(appliance_id, booking_id, check_key)
+);
+
 -- Brands a technician added via "Add Brand", reusable for that appliance
 -- category. name_key is the case-folded name so "bosch" and "Bosch" collide.
 CREATE TABLE IF NOT EXISTS custom_brands (

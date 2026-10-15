@@ -12,6 +12,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
 
+import '../../features/passport/inspection_catalog.dart';
 import 'api_config.dart';
 
 const _timeout = Duration(seconds: 15);
@@ -47,6 +48,46 @@ class KitchenAppliance {
   final int? installYear;
   final Map<String, dynamic> specs;
   final String notes;
+}
+
+/// One checklist line as the server returns it: [result] is null until the
+/// technician has recorded it for this visit.
+class InspectionCheck {
+  const InspectionCheck({
+    required this.key,
+    required this.label,
+    required this.result,
+    required this.note,
+  });
+
+  factory InspectionCheck.fromJson(Map<String, dynamic> j) => InspectionCheck(
+        key: j['key'] as String,
+        label: j['label'] as String,
+        result: InspectionResult.fromWire(j['result'] as String?),
+        note: (j['note'] as String?) ?? '',
+      );
+
+  final String key;
+  final String label;
+  final InspectionResult? result;
+  final String note;
+}
+
+class Inspection {
+  const Inspection({required this.applianceId, required this.category, required this.checks});
+
+  factory Inspection.fromJson(Map<String, dynamic> j) => Inspection(
+        applianceId: j['applianceId'] as String,
+        category: j['category'] as String,
+        checks: [
+          for (final c in (j['checks'] as List? ?? const []))
+            InspectionCheck.fromJson(c as Map<String, dynamic>),
+        ],
+      );
+
+  final String applianceId;
+  final String category;
+  final List<InspectionCheck> checks;
 }
 
 /// Outcome of a passport call. [error] is a message safe to show the user.
@@ -110,6 +151,32 @@ class PassportApi {
     return r.status == 201
         ? PassportResult.ok(appliance)
         : PassportResult.okExisting(appliance);
+  }
+
+  String _inspectionPath(String bookingId, String applianceId) =>
+      '/api/technician/bookings/$bookingId/kitchen/appliances/$applianceId/inspection';
+
+  Future<PassportResult<Inspection>> inspectionFor(String bookingId, String applianceId) async {
+    final r = await _send('GET', _inspectionPath(bookingId, applianceId));
+    if (r.status != 200) return PassportResult.failure(_message(r));
+    return PassportResult.ok(Inspection.fromJson(r.json));
+  }
+
+  /// Saves [results] (item key -> result + note) for this visit and returns
+  /// the full checklist as stored.
+  Future<PassportResult<Inspection>> saveInspection(
+    String bookingId,
+    String applianceId,
+    List<({String key, InspectionResult result, String note})> results,
+  ) async {
+    final r = await _send('PUT', _inspectionPath(bookingId, applianceId), body: {
+      'results': [
+        for (final e in results)
+          {'key': e.key, 'result': e.result.wire, if (e.note.isNotEmpty) 'note': e.note},
+      ],
+    });
+    if (r.status != 200) return PassportResult.failure(_message(r));
+    return PassportResult.ok(Inspection.fromJson(r.json));
   }
 
   Future<PassportResult<List<String>>> customBrands(String categoryId) async {

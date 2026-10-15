@@ -63,7 +63,7 @@ class KitchenPassportScreen extends ConsumerWidget {
                         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
                         itemCount: list.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (_, i) => _ApplianceCard(list[i]),
+                        itemBuilder: (_, i) => _ApplianceCard(jobId: jobId, a: list[i]),
                       ),
               ),
               Dock(
@@ -97,7 +97,8 @@ List<String> specSummary(ApplianceCategory category, Map<String, dynamic> specs)
 }
 
 class _ApplianceCard extends StatelessWidget {
-  const _ApplianceCard(this.a);
+  const _ApplianceCard({required this.jobId, required this.a});
+  final String jobId;
   final KitchenAppliance a;
 
   @override
@@ -110,6 +111,9 @@ class _ApplianceCard extends StatelessWidget {
       if (a.installYear != null) '${a.installYear}',
     ].join(' · ');
     return CareCard(
+      onTap: category == null
+          ? null
+          : () => context.push('/tech/job/$jobId/kitchen/appliance/${a.id}/inspection', extra: a),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -130,6 +134,14 @@ class _ApplianceCard extends StatelessWidget {
                     runSpacing: 6,
                     children: [for (final c in chips) StatusChip(c, height: 26)],
                   ),
+                ],
+                if (category != null) ...[
+                  const SizedBox(height: 10),
+                  Text('Open checklist ›',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: context.scheme.primary)),
                 ],
               ],
             ),

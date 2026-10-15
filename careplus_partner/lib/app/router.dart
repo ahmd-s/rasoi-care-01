@@ -14,6 +14,8 @@ import '../features/jobs/tech_shifts_screen.dart';
 import '../features/jobs/tech_job_screen.dart';
 import '../features/jobs/tech_close_screen.dart';
 import '../features/jobs/airflow_check_screen.dart';
+import '../data/api/passport_api.dart';
+import '../features/passport/inspection_screen.dart';
 import '../features/passport/kitchen_passport_screen.dart';
 import '../features/passport/register_appliance_screen.dart';
 import '../features/support/coming_soon_screen.dart';
@@ -101,6 +103,17 @@ final router = GoRouter(
       path: '/tech/job/:id/kitchen/register',
       parentNavigatorKey: _rootKey,
       builder: (_, s) => RegisterApplianceScreen(jobId: s.pathParameters['id']!),
+    ),
+    GoRoute(
+      path: '/tech/job/:id/kitchen/appliance/:aid/inspection',
+      parentNavigatorKey: _rootKey,
+      builder: (_, s) {
+        final appliance = s.extra as KitchenAppliance?;
+        // Reached only from a Kitchen Passport card, which passes the
+        // appliance; a bare deep link has nothing to show, so go back.
+        if (appliance == null) return KitchenPassportScreen(jobId: s.pathParameters['id']!);
+        return InspectionScreen(jobId: s.pathParameters['id']!, appliance: appliance);
+      },
     ),
     GoRoute(
       path: '/tech/job/:id/airflow',
