@@ -9,9 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/api/api_repository.dart';
 import '../data/api/passport_api.dart';
+import '../data/api/vision_api.dart';
 import '../data/local/biometric_service.dart';
 import '../data/repository.dart';
 import '../features/jobs/airflow_check_screen.dart';
+import '../features/passport/photo_source.dart';
 
 /// Live-backend-backed repository. It falls back to
 /// [MockPartnerRepository]-shaped data internally for anything the server
@@ -198,6 +200,10 @@ class LocaleVM extends Notifier<Locale> {
 // Kitchen Passport (V9.7) — see lib/features/passport.
 // ---------------------------------------------------------------------------
 final passportApiProvider = Provider<PassportApi>((ref) => PassportApi());
+
+/// Vision AI photo inspection (server-mediated; no provider credential here).
+final visionApiProvider = Provider<VisionApi>((ref) => VisionApi());
+final photoSourceProvider = Provider<PhotoSource>((ref) => ImagePickerPhotoSource());
 
 /// Appliances already registered for the customer of job [jobId]. Errors
 /// carry a user-presentable message (see PassportApi).

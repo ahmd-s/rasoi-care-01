@@ -184,6 +184,15 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
                                 ),
                               const SizedBox(height: 16),
                             ],
+                            OutlinedButton.icon(
+                              key: const ValueKey('open-ai-inspection'),
+                              onPressed: () => context.push(
+                                  '/tech/job/${widget.jobId}/kitchen/appliance/${widget.appliance.id}/ai-inspection',
+                                  extra: widget.appliance),
+                              icon: const Icon(Icons.photo_camera_outlined),
+                              label: const Text('Photo inspection (AI, advisory)'),
+                            ),
+                            const SizedBox(height: 16),
                             for (final item in _items) ...[
                               _CheckCard(
                                 item: item,

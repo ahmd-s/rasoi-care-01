@@ -6,8 +6,7 @@ output, and the existing validation pipeline. With default configuration AI is
 off: every submission is refused with `503 ai_unavailable` and Kitchen Health
 scores stay technician-only.
 
-Not in this stage: Flutter photo capture/review UI, technician acceptance, and
-any change to the Kitchen Health formula. `aiScore` and `combinedScore` in the
+Not in this stage: technician acceptance and any change to the Kitchen Health formula. `aiScore` and `combinedScore` in the
 health endpoints remain `null`.
 
 ## Configuration (server environment only)
@@ -176,3 +175,28 @@ original upload, the validated result and job metadata are stored.
   A real adapter must still avoid putting secrets in its own logging.
 - Created-at timestamps have one-second resolution, so analyses created within
   the same second list in arbitrary order.
+
+## Partner app UI (read-only)
+
+The Partner app has a "Photo inspection (AI, advisory)" button on each
+appliance's checklist screen (`careplus_partner/lib/features/passport/
+ai_inspection_screen.dart`). It reads the config endpoint first and offers
+capture only when `enabled` is true; otherwise it says AI inspection is not
+available. Photos come from the camera or gallery (`image_picker`, already a
+dependency; resized to 1280 px / quality 80 by the picker), are previewed and
+removable, checked against the config limits (type by content, per-image and
+total size, count, duplicates), held in memory only, and uploaded only when the
+technician taps Analyse. Polling (2 s, easing to 5 s) stops at `completed`,
+`failed` or `rejected`, after 3 consecutive network failures, or after 60
+checks, and then offers "Check again". A job still running for the visit is
+resumed when the screen reopens. A retry after a failed job is an explicit new
+request (new `clientRequestId`); a resend after an unconfirmed network error
+reuses the same id so the server replays the original job.
+
+**The backend has no accept / edit / reject endpoint**, so the results screen
+is read-only and says so. The AI condition score is shown as "visual only,
+not used in the Kitchen Health score"; the app never calls the checklist or
+health endpoints from this screen. Strings on the new screens are English-only,
+like the other Kitchen Passport screens. Verified with Flutter widget tests
+against fake API/picker objects only; not yet exercised on a device, with real
+camera/gallery permission prompts, or against a real provider.
