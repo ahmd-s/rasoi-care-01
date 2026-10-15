@@ -288,6 +288,43 @@ CREATE TABLE IF NOT EXISTS kitchen_inspection_checks (
     UNIQUE(appliance_id, booking_id, check_key)
 );
 
+-- Vision AI inspection jobs (Stage A; see docs/VISION_AI.md). One row per
+-- submission. NO image bytes are ever stored — only the SHA-256 of each
+-- upload and the validated, guardrail-checked result. worker_id/heartbeat_at
+-- give a live process ownership of its jobs; a job whose owner stops
+-- heartbeating is marked failed ('interrupted') by the staleness sweep.
+CREATE TABLE IF NOT EXISTS kitchen_ai_inspections (
+    id                TEXT PRIMARY KEY,
+    appliance_id      TEXT NOT NULL REFERENCES kitchen_appliances(id),
+    booking_id        TEXT NOT NULL REFERENCES bookings(id),
+    technician_id     TEXT NOT NULL REFERENCES technicians(id),
+    status            TEXT NOT NULL,
+    client_request_id TEXT NOT NULL DEFAULT '',
+    worker_id         TEXT NOT NULL DEFAULT '',
+    heartbeat_at      TEXT NOT NULL,
+    provider          TEXT NOT NULL DEFAULT '',
+    model             TEXT NOT NULL DEFAULT '',
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    provider_called   INTEGER NOT NULL DEFAULT 0,
+    retryable         INTEGER NOT NULL DEFAULT 0,
+    error_code        TEXT NOT NULL DEFAULT '',
+    error_message     TEXT NOT NULL DEFAULT '',
+    image_count       INTEGER NOT NULL DEFAULT 0,
+    image_hashes      TEXT NOT NULL DEFAULT '[]',
+    result_json       TEXT,
+    condition_score   INTEGER,
+    created_at        TEXT NOT NULL,
+    started_at        TEXT,
+    completed_at      TEXT,
+    updated_at        TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchen_ai_request
+    ON kitchen_ai_inspections (technician_id, client_request_id) WHERE client_request_id <> '';
+CREATE INDEX IF NOT EXISTS ix_kitchen_ai_status_heartbeat
+    ON kitchen_ai_inspections (status, heartbeat_at);
+CREATE INDEX IF NOT EXISTS ix_kitchen_ai_appliance_visit
+    ON kitchen_ai_inspections (appliance_id, booking_id, created_at);
+
 -- Brands a technician added via "Add Brand", reusable for that appliance
 -- category. name_key is the case-folded name so "bosch" and "Bosch" collide.
 CREATE TABLE IF NOT EXISTS custom_brands (
@@ -539,6 +576,39 @@ def get_db():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def get_db_unpooled():
+    """A connection that never touches the shared Postgres pool.
+
+    psycopg2's SimpleConnectionPool "can't be shared across different
+    threads", and get_db() draws from it. Anything running off the request
+    thread (the Vision AI background worker) must use this instead: on
+    Postgres it opens its own connection, and close() really closes it; on
+    SQLite it is identical to get_db() (every call already opens a fresh
+    connection)."""
+    if DATABASE_URL:
+        import psycopg2
+
+        return _PgConnection(psycopg2.connect(DATABASE_URL))
+    return get_db()
+
+
+@contextlib.contextmanager
+def db_session_unpooled():
+    """db_session() for background threads — see get_db_unpooled()."""
+    conn = get_db_unpooled()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 @contextlib.contextmanager

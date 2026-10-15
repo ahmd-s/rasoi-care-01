@@ -29,6 +29,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import database
 import kitchen_health
 import kitchen_passport
+import vision_guardrails
+import vision_images
+import vision_jobs
+import vision_provider
 from database import get_db, init_db, next_id, now, new_uuid_id
 
 # ---------------------------------------------------------------- worker mode
@@ -4525,6 +4529,177 @@ def get_my_kitchen_health():
     summary = kitchen_health.summarize_kitchen(_kitchen_health_entries(conn, request.user["id"]))
     conn.close()
     return jsonify(summary)
+
+
+# ---------------------------------------------------------------- vision AI (Stage A)
+# Asynchronous, server-mediated photo inspection. Stage A ships the plumbing
+# only: no real provider is integrated, so unless an operator explicitly
+# configures one (see docs/VISION_AI.md) every submission is refused with 503
+# and the health scores stay technician-only. Photos are validated and held in
+# memory for the job; they are never stored.
+def _ai_unavailable(code="ai_unavailable", message="AI inspection is not available right now."):
+    return jsonify({"error": "Service unavailable", "code": code, "message": message}), 503
+
+
+def _ai_job_for(conn, booking_id, appliance_id, inspection_id):
+    return conn.execute(
+        "SELECT * FROM kitchen_ai_inspections WHERE id = ? AND appliance_id = ? AND booking_id = ?",
+        (inspection_id, appliance_id, booking_id),
+    ).fetchone()
+
+
+@app.route("/api/technician/ai-inspection/config", methods=["GET"])
+@require_technician_auth
+def ai_inspection_config():
+    """What the Partner app needs before offering photo capture. No secrets
+    and no provider details."""
+    return jsonify({
+        "enabled": vision_provider.get_provider() is not None and not vision_jobs.breaker.is_open(),
+        "minImages": vision_images.MIN_IMAGES,
+        "maxImages": vision_images.MAX_IMAGES,
+        "maxImageBytes": vision_images.MAX_IMAGE_BYTES,
+        "maxTotalBytes": vision_images.MAX_TOTAL_BYTES,
+        "acceptedTypes": sorted(vision_images.ALLOWED_FORMATS.values()),
+        "recommendedLongEdgePx": vision_images.OUTPUT_LONG_EDGE,
+        "recommendedJpegQuality": vision_images.OUTPUT_QUALITY,
+        "maxSubmissionsPerVisit": vision_jobs.max_submissions_per_visit(),
+        "privacyNotice": vision_guardrails.PRIVACY_NOTICE,
+    })
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/ai-inspections",
+           methods=["POST"])
+@require_technician_auth
+def submit_ai_inspection(booking_id, appliance_id):
+    """Queues a Vision AI analysis of 1-5 photos of this appliance for this
+    visit. Responds 202 immediately; poll the returned inspection id."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request", "message": "Request body must be a JSON object"}), 400
+    client_request_id = data.get("clientRequestId")
+    if client_request_id is None:
+        client_request_id = ""
+    elif not isinstance(client_request_id, str) or not kitchen_passport._REQUEST_ID_RE.match(client_request_id):
+        return jsonify({"error": "Invalid request",
+                        "fields": {"clientRequestId": "must be 8-64 letters, digits, '-' or '_'"}}), 400
+
+    conn = get_db()
+    try:
+        _uid, appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=True)
+        if err:
+            return err
+        tech_id = request.technician["id"]
+        vision_jobs.sweep_stale(conn)
+        replay = vision_jobs.find_by_request_id(conn, tech_id, client_request_id)
+        if replay:
+            if replay["appliance_id"] != appliance_id or replay["booking_id"] != booking_id:
+                return jsonify({"error": "Conflict", "code": "request_id_reused",
+                                "message": "This request id was already used for a different inspection."}), 409
+            return jsonify({"inspection": vision_jobs.serialise(replay)}), 200
+        # AI availability is checked after ownership and replay, so a retried
+        # request still returns its original job and a disabled deployment
+        # reveals nothing about other technicians' bookings.
+        if vision_provider.get_provider() is None:
+            return _ai_unavailable()
+        if vision_jobs.breaker.is_open():
+            return _ai_unavailable("circuit_open", "The AI service is temporarily unavailable. Please try again later.")
+        if not vision_jobs.queue_has_room():
+            return _ai_unavailable("busy", vision_jobs.BUSY_MESSAGE)
+        limit_error = vision_jobs._limit_error(conn, appliance_id, booking_id, tech_id)
+        if limit_error:
+            return jsonify({"error": "Too Many Requests", "code": limit_error.code,
+                            "message": limit_error.message}), 429
+        category = appliance["category"]
+        check_rows = conn.execute(
+            "SELECT check_key, result FROM kitchen_inspection_checks WHERE appliance_id = ? AND booking_id = ?",
+            (appliance_id, booking_id),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    # CPU-bound decode / re-encode happens with no database connection held.
+    try:
+        images = vision_images.validate_images(data.get("images"))
+    except vision_images.ImageRejected as rejected:
+        body = {"error": "Invalid request", "code": rejected.code, "message": rejected.message}
+        if rejected.index is not None:
+            body["imageIndex"] = rejected.index
+        return jsonify(body), 400
+
+    labels = dict(kitchen_passport.CHECKLISTS[category])
+    ctx = {
+        "category": category, "applianceId": appliance_id, "bookingId": booking_id,
+        "images": [i.jpeg for i in images],
+        # Checklist label -> result only; technician free-text notes are never sent.
+        "technician_checks": {labels[r["check_key"]]: r["result"] for r in check_rows if r["check_key"] in labels},
+    }
+    conn = get_db()
+    try:
+        try:
+            row, created = vision_jobs.create_job(
+                conn, appliance_id=appliance_id, booking_id=booking_id, technician_id=tech_id,
+                client_request_id=client_request_id, image_hashes=[i.sha256 for i in images])
+        except vision_jobs.SubmitError as e:
+            return jsonify({"error": "Too Many Requests" if e.http_status == 429 else "Conflict",
+                            "code": e.code, "message": e.message}), e.http_status
+        job_id = row["id"]
+    finally:
+        conn.close()
+    if not created:
+        conn = get_db()
+        try:
+            return jsonify({"inspection": vision_jobs.serialise(
+                conn.execute("SELECT * FROM kitchen_ai_inspections WHERE id = ?", (job_id,)).fetchone())}), 200
+        finally:
+            conn.close()
+    if not vision_jobs.enqueue(job_id, ctx):
+        vision_jobs.mark_busy(job_id)
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM kitchen_ai_inspections WHERE id = ?", (job_id,)).fetchone()
+        return jsonify({"inspection": vision_jobs.serialise(row)}), 202
+    finally:
+        conn.close()
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/ai-inspections",
+           methods=["GET"])
+@require_technician_auth
+def list_ai_inspections(booking_id, appliance_id):
+    """Recent analyses for this appliance on this visit (newest first), without
+    result bodies. Readable on closed bookings."""
+    conn = get_db()
+    try:
+        _uid, _appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=False)
+        if err:
+            return err
+        vision_jobs.sweep_stale(conn)
+        rows = conn.execute(
+            "SELECT * FROM kitchen_ai_inspections WHERE appliance_id = ? AND booking_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 10", (appliance_id, booking_id)).fetchall()
+        return jsonify({"inspections": [vision_jobs.serialise(r, include_result=False) for r in rows]})
+    finally:
+        conn.close()
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/ai-inspections/<inspection_id>",
+           methods=["GET"])
+@require_technician_auth
+def get_ai_inspection(booking_id, appliance_id, inspection_id):
+    """Status (and, once completed, the validated result) of one analysis.
+    An id that belongs to another appliance or visit is a 404."""
+    conn = get_db()
+    try:
+        _uid, _appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=False)
+        if err:
+            return err
+        vision_jobs.sweep_stale(conn)
+        row = _ai_job_for(conn, booking_id, appliance_id, inspection_id)
+        if not row:
+            return jsonify({"error": "not found"}), 404
+        return jsonify({"inspection": vision_jobs.serialise(row)})
+    finally:
+        conn.close()
 
 
 @app.route("/api/technician/custom-brands", methods=["GET"])

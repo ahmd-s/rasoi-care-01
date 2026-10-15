@@ -19,3 +19,12 @@ Use this section to tell people how to report a vulnerability.
 Tell them where to go, how often they can expect to get an update on a
 reported vulnerability, what to expect if the vulnerability is accepted or
 declined, etc.
+
+## Vision AI inspection (Stage A)
+
+No AI provider is integrated and AI is disabled unless an operator configures
+one. Provider credentials, if ever added, must be server environment variables
+only — never in the Flutter apps, the repository, logs or API responses. See
+`docs/VISION_AI.md` for configuration, image handling (nothing is persisted),
+guardrails, restart behaviour and the privacy / legal review required before
+real use.

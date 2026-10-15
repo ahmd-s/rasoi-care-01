@@ -10,3 +10,7 @@ PyJWT==2.15.0
 # minimum, CI's pip-audit gate (see requirements-dev.txt) catches known CVEs).
 cryptography>=50.0.2
 psycopg2-binary>=2.9.13
+# Vision AI image validation (docs/VISION_AI.md): decode, re-encode and strip
+# EXIF/GPS from uploads. Floor pin like the other native-extension packages —
+# Pillow's image-format code has had CVEs, so CI's pip-audit gate keeps it honest.
+Pillow>=12.3.0
