@@ -208,6 +208,15 @@ final kitchenAppliancesProvider = FutureProvider.autoDispose
   return r.value!;
 });
 
+/// Kitchen-level health for the customer of job [jobId] (read-only, computed
+/// on the server from the saved checklists).
+final kitchenHealthProvider =
+    FutureProvider.autoDispose.family<KitchenHealth, String>((ref, jobId) async {
+  final r = await ref.watch(passportApiProvider).kitchenHealth(jobId);
+  if (!r.ok) throw PassportException(r.error!);
+  return r.value!;
+});
+
 class PassportException implements Exception {
   const PassportException(this.message);
   final String message;

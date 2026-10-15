@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/widgets/care_widgets.dart';
 import '../../data/api/passport_api.dart';
 import '../../state/providers.dart';
+import 'health_widgets.dart';
 import 'passport_catalog.dart';
 
 /// Kitchen Passport for the customer of one job: what's already registered,
@@ -15,12 +16,17 @@ class KitchenPassportScreen extends ConsumerWidget {
 
   Future<void> _register(BuildContext context, WidgetRef ref) async {
     final added = await context.push<bool>('/tech/job/$jobId/kitchen/register');
-    if (added == true) ref.invalidate(kitchenAppliancesProvider(jobId));
+    if (added == true) {
+      ref.invalidate(kitchenAppliancesProvider(jobId));
+      ref.invalidate(kitchenHealthProvider(jobId));
+    }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appliances = ref.watch(kitchenAppliancesProvider(jobId));
+    // Health is secondary: while it loads or if it fails, the list still shows.
+    final health = ref.watch(kitchenHealthProvider(jobId)).valueOrNull;
     return Scaffold(
       appBar: AppBar(
         leading: BackButton(onPressed: context.pop),
@@ -59,11 +65,23 @@ class KitchenPassportScreen extends ConsumerWidget {
                           ),
                         ],
                       )
-                    : ListView.separated(
+                    : ListView(
                         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                        itemCount: list.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (_, i) => _ApplianceCard(jobId: jobId, a: list[i]),
+                        children: [
+                          if (health != null && list.isNotEmpty) ...[
+                            KitchenHealthPanel(health),
+                            const SizedBox(height: 14),
+                          ],
+                          for (final a in list) ...[
+                            _ApplianceCard(
+                              jobId: jobId,
+                              a: a,
+                              health: health?.forAppliance(a.id)?.assessment,
+                              onReturn: () => ref.invalidate(kitchenHealthProvider(jobId)),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                        ],
                       ),
               ),
               Dock(
@@ -97,9 +115,11 @@ List<String> specSummary(ApplianceCategory category, Map<String, dynamic> specs)
 }
 
 class _ApplianceCard extends StatelessWidget {
-  const _ApplianceCard({required this.jobId, required this.a});
+  const _ApplianceCard({required this.jobId, required this.a, this.health, this.onReturn});
   final String jobId;
   final KitchenAppliance a;
+  final HealthAssessment? health;
+  final VoidCallback? onReturn;
 
   @override
   Widget build(BuildContext context) {
@@ -113,7 +133,11 @@ class _ApplianceCard extends StatelessWidget {
     return CareCard(
       onTap: category == null
           ? null
-          : () => context.push('/tech/job/$jobId/kitchen/appliance/${a.id}/inspection', extra: a),
+          : () async {
+              await context.push('/tech/job/$jobId/kitchen/appliance/${a.id}/inspection',
+                  extra: a);
+              onReturn?.call();
+            },
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -133,6 +157,24 @@ class _ApplianceCard extends StatelessWidget {
                     spacing: 6,
                     runSpacing: 6,
                     children: [for (final c in chips) StatusChip(c, height: 26)],
+                  ),
+                ],
+                if (health != null) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      if (health!.score != null)
+                        StatusChip('${health!.score} · ${health!.statusLabel ?? ''}',
+                            tone: toneForStatus(health!.status), height: 26)
+                      else
+                        Text('Not enough checks to score', style: context.type.bodySmall),
+                      if (health!.safetyFlagged)
+                        StatusChip(health!.safetyWarning ?? 'Safety item flagged',
+                            tone: ChipTone.danger, height: 26),
+                    ],
                   ),
                 ],
                 if (category != null) ...[

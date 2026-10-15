@@ -27,6 +27,7 @@ import jwt
 from flask import Flask, request, jsonify, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 import database
+import kitchen_health
 import kitchen_passport
 from database import get_db, init_db, next_id, now, new_uuid_id
 
@@ -4448,6 +4449,82 @@ def save_kitchen_inspection(booking_id, appliance_id):
     payload = _inspection_payload(conn, booking_id, appliance)
     conn.close()
     return jsonify(payload)
+
+
+def _kitchen_health_entries(conn, user_id):
+    """Per-appliance assessments for a customer's whole kitchen, computed from
+    the saved checklist answers (latest usable visit per appliance)."""
+    appliances = conn.execute(
+        "SELECT id, category, brand, model FROM kitchen_appliances WHERE user_id = ? "
+        "ORDER BY created_at, id", (user_id,)
+    ).fetchall()
+    rows_by_appliance = {a["id"]: [] for a in appliances}
+    if appliances:
+        marks = ",".join("?" * len(appliances))
+        for r in conn.execute(
+            "SELECT appliance_id, booking_id, check_key, result, note, updated_at "
+            f"FROM kitchen_inspection_checks WHERE appliance_id IN ({marks})",
+            [a["id"] for a in appliances],
+        ).fetchall():
+            rows_by_appliance[r["appliance_id"]].append(dict(r))
+    entries = []
+    for a in appliances:
+        assessment, booking_id, assessed_at = kitchen_health.latest_assessment(
+            a["category"], rows_by_appliance[a["id"]])
+        entries.append({
+            "id": a["id"], "category": a["category"], "brand": a["brand"], "model": a["model"],
+            "assessment": assessment, "bookingId": booking_id, "assessedAt": assessed_at,
+        })
+    return entries
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/health",
+           methods=["GET"])
+@require_technician_auth
+def get_kitchen_appliance_health(booking_id, appliance_id):
+    """Technician-assessed health of one appliance for THIS visit (booking),
+    including the technician's own notes on flagged items. Same access rules
+    as the checklist read."""
+    conn = get_db()
+    _uid, appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=False)
+    if err:
+        conn.close()
+        return err
+    rows = conn.execute(
+        "SELECT check_key, result, note FROM kitchen_inspection_checks "
+        "WHERE appliance_id = ? AND booking_id = ?", (appliance_id, booking_id)
+    ).fetchall()
+    conn.close()
+    saved = {r["check_key"]: {"result": r["result"], "note": r["note"]} for r in rows}
+    result = kitchen_health.assess_appliance(appliance["category"], saved, include_notes=True)
+    result.update({"applianceId": appliance_id, "bookingId": booking_id})
+    return jsonify(result)
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/health", methods=["GET"])
+@require_technician_auth
+def get_booking_kitchen_health(booking_id):
+    """Kitchen-level view for the customer of a booking assigned to this
+    technician. Built from every technician's saved answers, so it carries
+    flagged item labels only — never another technician's free-text notes."""
+    conn = get_db()
+    user_id, err = _assigned_booking_customer(conn, booking_id)
+    if err:
+        conn.close()
+        return err
+    summary = kitchen_health.summarize_kitchen(_kitchen_health_entries(conn, user_id))
+    conn.close()
+    return jsonify(summary)
+
+
+@app.route("/api/kitchen-passport/health", methods=["GET"])
+@require_auth
+def get_my_kitchen_health():
+    """The signed-in customer's own kitchen health (read-only)."""
+    conn = get_db()
+    summary = kitchen_health.summarize_kitchen(_kitchen_health_entries(conn, request.user["id"]))
+    conn.close()
+    return jsonify(summary)
 
 
 @app.route("/api/technician/custom-brands", methods=["GET"])

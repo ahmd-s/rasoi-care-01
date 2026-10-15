@@ -204,4 +204,100 @@ void main() {
       expect(invalid.error, contains('results[0].result'));
     });
   });
+
+  group('health', () {
+    final scored = {
+      'applianceId': 'KAPP-1',
+      'technicianScore': 85,
+      'scoreStatus': 'healthy',
+      'status': 'attention',
+      'statusLabel': 'Attention',
+      'coverage': {'tested': 8, 'total': 8, 'label': '8 of 8 checks tested'},
+      'safetyFlagged': true,
+      'safetyWarning': 'Safety item flagged',
+      'safetyFlaggedItems': ['Safety'],
+      'flaggedItems': [
+        {'key': 'safety', 'label': 'Safety', 'note': 'loose hose'},
+      ],
+      'message': null,
+      'explanation': ['Technician assessment only. Vision AI inspection is not available yet.'],
+      'aiScore': null,
+      'combinedScore': null,
+      'scoreBasisLabel': 'Technician assessment only',
+      'disclaimer': 'Operational guidance, not a certification or a diagnosis of hidden faults.',
+    };
+
+    test('applianceHealth maps score, held status, safety and null AI fields', () async {
+      late http.BaseRequest seen;
+      final r = await _api(MockClient((req) async {
+        seen = req;
+        return _json(200, scored);
+      })).applianceHealth('B-1', 'KAPP-1');
+      expect(seen.url.path, '/api/technician/bookings/B-1/kitchen/appliances/KAPP-1/health');
+      final h = r.value!;
+      expect(h.score, 85);
+      expect(h.status, 'attention'); // held below Healthy by the safety flag
+      expect(h.safetyFlagged, isTrue);
+      expect(h.safetyItems, ['Safety']);
+      expect(h.flaggedLabels, ['Safety']);
+      expect(h.coverageLabel, '8 of 8 checks tested');
+      expect(h.aiScore, isNull);
+      expect(h.combinedScore, isNull);
+      expect(h.basisLabel, 'Technician assessment only');
+    });
+
+    test('an unscored appliance has a null score and a message', () async {
+      final r = await _api(MockClient((_) async => _json(200, {
+            ...scored,
+            'technicianScore': null,
+            'status': null,
+            'statusLabel': null,
+            'safetyFlagged': false,
+            'safetyFlaggedItems': [],
+            'message': 'Not enough checks to score.',
+            'coverage': {'tested': 5, 'total': 8, 'label': '5 of 8 checks tested'},
+          }))).applianceHealth('B-1', 'KAPP-1');
+      expect(r.value!.score, isNull);
+      expect(r.value!.status, isNull);
+      expect(r.value!.message, 'Not enough checks to score.');
+    });
+
+    test('kitchenHealth maps coverage and per-appliance rows', () async {
+      final r = await _api(MockClient((_) async => _json(200, {
+            'technicianScore': 70,
+            'status': 'attention',
+            'statusLabel': 'Attention',
+            'coverage': {'assessed': 1, 'registered': 2, 'label': '1 of 2 appliances assessed'},
+            'safetyFlagged': false,
+            'message': null,
+            'explanation': [],
+            'scoreBasisLabel': 'Technician assessment only',
+            'disclaimer': 'x',
+            'appliances': [
+              {...scored, 'id': 'KAPP-1', 'category': 'hob', 'brand': 'Elica', 'model': ''},
+              {
+                'id': 'KAPP-2', 'category': 'ro_purifier', 'brand': 'Kent', 'model': '',
+                'technicianScore': null, 'status': null,
+                'coverage': {'tested': 0, 'total': 8, 'label': '0 of 8 checks tested'},
+                'message': 'Not enough checks to score.',
+              },
+            ],
+          }))).kitchenHealth('B-1');
+      final k = r.value!;
+      expect(k.score, 70);
+      expect(k.assessedCount, 1);
+      expect(k.registeredCount, 2);
+      expect(k.coverageLabel, '1 of 2 appliances assessed');
+      expect(k.forAppliance('KAPP-1')!.assessment.score, 85);
+      expect(k.forAppliance('KAPP-2')!.assessment.score, isNull);
+      expect(k.forAppliance('nope'), isNull);
+    });
+
+    test('404 reads as no longer assigned', () async {
+      final r = await _api(MockClient((_) async => _json(404, {'error': 'not found'})))
+          .kitchenHealth('B-1');
+      expect(r.ok, isFalse);
+      expect(r.error, contains('no longer assigned'));
+    });
+  });
 }

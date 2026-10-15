@@ -34,10 +34,29 @@ class _FakeApi extends PassportApi {
         super(tokenProvider: () async => 't');
 
   Inspection _stored;
+  HealthAssessment? health;
+  KitchenHealth? kitchen;
+  var healthLoads = 0;
   final String? loadError;
   final String? saveError;
   final saves = <List<({String key, InspectionResult result, String note})>>[];
   var loads = 0;
+
+  @override
+  Future<PassportResult<HealthAssessment>> applianceHealth(
+      String bookingId, String applianceId) async {
+    healthLoads++;
+    final h = health;
+    return h == null
+        ? const PassportResult.failure('no health in this test')
+        : PassportResult.ok(h);
+  }
+
+  @override
+  Future<PassportResult<KitchenHealth>> kitchenHealth(String bookingId) async {
+    final k = kitchen;
+    return k == null ? const PassportResult.failure('no kitchen health') : PassportResult.ok(k);
+  }
 
   @override
   Future<PassportResult<Inspection>> inspectionFor(String bookingId, String applianceId) async {
@@ -214,5 +233,110 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Hob / Cooktop checklist'), findsOneWidget);
     expect(find.text('Burner performance'), findsOneWidget);
+  });
+
+  testWidgets('shows the technician score panel and refreshes it after a save', (tester) async {
+    final api = _FakeApi()
+      ..health = HealthAssessment(
+        score: 78,
+        status: 'attention',
+        statusLabel: 'Attention',
+        testedChecks: 8,
+        totalChecks: 8,
+        coverageLabel: '8 of 8 checks tested',
+        safetyFlagged: true,
+        safetyWarning: 'Safety item flagged',
+        safetyItems: const ['Safety'],
+        flaggedLabels: const ['Safety'],
+        message: null,
+        explanation: const ['Technician assessment only. Vision AI inspection is not available yet.'],
+        basisLabel: 'Technician assessment only',
+        disclaimer: 'Operational guidance, not a certification or a diagnosis of hidden faults.',
+        aiScore: null,
+        combinedScore: null,
+      );
+    await _pump(tester, api);
+    expect(api.healthLoads, 1);
+    await _reveal(tester, find.text('78'));
+    expect(find.text('78'), findsOneWidget);
+    expect(find.text('Safety item flagged: Safety'), findsOneWidget);
+    expect(find.text('8 of 8 checks tested'), findsOneWidget);
+
+    await _pick(tester, 'Ignition', 'Good');
+    await _reveal(tester, find.text('Unsaved changes — save to update the score.'));
+    expect(find.text('Unsaved changes — save to update the score.'), findsOneWidget);
+    await tester.tap(find.text('Save checklist'));
+    await tester.pumpAndSettle();
+    expect(api.healthLoads, 2); // score re-fetched from the server after saving
+  });
+
+  testWidgets('a failed score fetch hides the panel but not the checklist', (tester) async {
+    await _pump(tester, _FakeApi()); // health stays null -> failure
+    expect(find.text('Burner performance'), findsOneWidget);
+    expect(find.textContaining('TECHNICIAN ASSESSMENT'), findsNothing);
+  });
+
+  testWidgets('the passport screen shows kitchen health and per-appliance scores', (tester) async {
+    tester.view.physicalSize = const Size(360, 740);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    const disclaimer = 'Operational guidance, not a certification or a diagnosis of hidden faults.';
+    HealthAssessment h(int? score) => HealthAssessment(
+          score: score,
+          status: score == null ? null : 'attention',
+          statusLabel: score == null ? null : 'Attention',
+          testedChecks: 8,
+          totalChecks: 8,
+          coverageLabel: '8 of 8 checks tested',
+          safetyFlagged: false,
+          safetyWarning: null,
+          safetyItems: const [],
+          flaggedLabels: const [],
+          message: score == null ? 'Not enough checks to score.' : null,
+          explanation: const [],
+          basisLabel: 'Technician assessment only',
+          disclaimer: disclaimer,
+          aiScore: null,
+          combinedScore: null,
+        );
+    final kitchen = KitchenHealth(
+      score: 78,
+      status: 'attention',
+      statusLabel: 'Attention',
+      assessedCount: 1,
+      registeredCount: 2,
+      coverageLabel: '1 of 2 appliances assessed',
+      safetyFlagged: false,
+      safetyWarning: null,
+      message: null,
+      explanation: const [],
+      basisLabel: 'Technician assessment only',
+      disclaimer: disclaimer,
+      appliances: [
+        KitchenHealthAppliance(
+            id: 'KAPP-1', category: 'hob', brand: 'Elica', model: '', assessment: h(78)),
+      ],
+    );
+    final router = GoRouter(
+      initialLocation: '/tech/job/B-1/kitchen',
+      routes: [
+        GoRoute(
+          path: '/tech/job/:id/kitchen',
+          builder: (_, s) => KitchenPassportScreen(jobId: s.pathParameters['id']!),
+        ),
+      ],
+    );
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        passportApiProvider.overrideWithValue(_FakeApi()),
+        kitchenAppliancesProvider('B-1').overrideWith((_) async => [_hob]),
+        kitchenHealthProvider('B-1').overrideWith((_) async => kitchen),
+      ],
+      child: MaterialApp.router(routerConfig: router, theme: CarePlusTheme.light()),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 2 appliances assessed'), findsOneWidget);
+    expect(find.text('78 · Attention'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

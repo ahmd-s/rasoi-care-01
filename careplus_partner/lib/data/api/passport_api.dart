@@ -90,6 +90,171 @@ class Inspection {
   final List<InspectionCheck> checks;
 }
 
+/// Technician-assessed health of one appliance (or one row of the kitchen
+/// summary). [score] and [status] are null until enough checks are tested;
+/// [aiScore] / [combinedScore] stay null until Vision AI exists. [status] can
+/// be lower than [scoreStatus] when a safety item is flagged.
+class HealthAssessment {
+  const HealthAssessment({
+    required this.score,
+    required this.status,
+    required this.statusLabel,
+    required this.testedChecks,
+    required this.totalChecks,
+    required this.coverageLabel,
+    required this.safetyFlagged,
+    required this.safetyWarning,
+    required this.safetyItems,
+    required this.flaggedLabels,
+    required this.message,
+    required this.explanation,
+    required this.basisLabel,
+    required this.disclaimer,
+    required this.aiScore,
+    required this.combinedScore,
+  });
+
+  factory HealthAssessment.fromJson(Map<String, dynamic> j) {
+    final coverage = (j['coverage'] as Map?) ?? const {};
+    return HealthAssessment(
+      score: j['technicianScore'] as int?,
+      status: j['status'] as String?,
+      statusLabel: j['statusLabel'] as String?,
+      testedChecks: (coverage['tested'] as int?) ?? 0,
+      totalChecks: (coverage['total'] as int?) ?? 0,
+      coverageLabel: (coverage['label'] as String?) ?? '',
+      safetyFlagged: (j['safetyFlagged'] as bool?) ?? false,
+      safetyWarning: j['safetyWarning'] as String?,
+      safetyItems: [
+        for (final x in (j['safetyFlaggedItems'] as List? ?? const []))
+          x as String,
+      ],
+      flaggedLabels: [
+        for (final x in (j['flaggedItems'] as List? ?? const []))
+          x is Map ? x['label'] as String : x as String,
+      ],
+      message: j['message'] as String?,
+      explanation: [
+        for (final x in (j['explanation'] as List? ?? const [])) x as String,
+      ],
+      basisLabel:
+          (j['scoreBasisLabel'] as String?) ?? 'Technician assessment only',
+      disclaimer: (j['disclaimer'] as String?) ?? '',
+      aiScore: j['aiScore'] as int?,
+      combinedScore: j['combinedScore'] as int?,
+    );
+  }
+
+  final int? score;
+  final String? status; // healthy | attention | priority | critical
+  final String? statusLabel;
+  final int testedChecks;
+  final int totalChecks;
+  final String coverageLabel;
+  final bool safetyFlagged;
+  final String? safetyWarning;
+  final List<String> safetyItems;
+  final List<String> flaggedLabels;
+  final String? message;
+  final List<String> explanation;
+  final String basisLabel;
+  final String disclaimer;
+  final int? aiScore;
+  final int? combinedScore;
+}
+
+class KitchenHealthAppliance {
+  const KitchenHealthAppliance({
+    required this.id,
+    required this.category,
+    required this.brand,
+    required this.model,
+    required this.assessment,
+  });
+
+  factory KitchenHealthAppliance.fromJson(Map<String, dynamic> j) =>
+      KitchenHealthAppliance(
+        id: j['id'] as String,
+        category: j['category'] as String,
+        brand: (j['brand'] as String?) ?? '',
+        model: (j['model'] as String?) ?? '',
+        assessment: HealthAssessment.fromJson(j),
+      );
+
+  final String id;
+  final String category;
+  final String brand;
+  final String model;
+  final HealthAssessment assessment;
+}
+
+/// Kitchen-level view: the average of the appliances that have a score, with
+/// assessed-versus-registered counts. Unassessed appliances are never counted
+/// as zero.
+class KitchenHealth {
+  const KitchenHealth({
+    required this.score,
+    required this.status,
+    required this.statusLabel,
+    required this.assessedCount,
+    required this.registeredCount,
+    required this.coverageLabel,
+    required this.safetyFlagged,
+    required this.safetyWarning,
+    required this.message,
+    required this.explanation,
+    required this.basisLabel,
+    required this.disclaimer,
+    required this.appliances,
+  });
+
+  factory KitchenHealth.fromJson(Map<String, dynamic> j) {
+    final coverage = (j['coverage'] as Map?) ?? const {};
+    return KitchenHealth(
+      score: j['technicianScore'] as int?,
+      status: j['status'] as String?,
+      statusLabel: j['statusLabel'] as String?,
+      assessedCount: (coverage['assessed'] as int?) ?? 0,
+      registeredCount: (coverage['registered'] as int?) ?? 0,
+      coverageLabel: (coverage['label'] as String?) ?? '',
+      safetyFlagged: (j['safetyFlagged'] as bool?) ?? false,
+      safetyWarning: j['safetyWarning'] as String?,
+      message: j['message'] as String?,
+      explanation: [
+        for (final x in (j['explanation'] as List? ?? const [])) x as String,
+      ],
+      basisLabel:
+          (j['scoreBasisLabel'] as String?) ?? 'Technician assessment only',
+      disclaimer: (j['disclaimer'] as String?) ?? '',
+      appliances: [
+        for (final a in (j['appliances'] as List? ?? const []))
+          KitchenHealthAppliance.fromJson(a as Map<String, dynamic>),
+      ],
+    );
+  }
+
+  final int? score;
+  final String? status;
+  final String? statusLabel;
+  final int assessedCount;
+  final int registeredCount;
+  final String coverageLabel;
+  final bool safetyFlagged;
+  final String? safetyWarning;
+  final String? message;
+  final List<String> explanation;
+  final String basisLabel;
+  final String disclaimer;
+  final List<KitchenHealthAppliance> appliances;
+
+  KitchenHealthAppliance? forAppliance(String id) {
+    for (final a in appliances) {
+      if (a.id == id) return a;
+    }
+    return null;
+  }
+}
+
 /// Outcome of a passport call. [error] is a message safe to show the user.
 class PassportResult<T> {
   const PassportResult.ok(this.value)
@@ -177,6 +342,27 @@ class PassportApi {
     });
     if (r.status != 200) return PassportResult.failure(_message(r));
     return PassportResult.ok(Inspection.fromJson(r.json));
+  }
+
+  Future<PassportResult<HealthAssessment>> applianceHealth(
+    String bookingId,
+    String applianceId,
+  ) async {
+    final r = await _send(
+      'GET',
+      '/api/technician/bookings/$bookingId/kitchen/appliances/$applianceId/health',
+    );
+    if (r.status != 200) return PassportResult.failure(_message(r));
+    return PassportResult.ok(HealthAssessment.fromJson(r.json));
+  }
+
+  Future<PassportResult<KitchenHealth>> kitchenHealth(String bookingId) async {
+    final r = await _send(
+      'GET',
+      '/api/technician/bookings/$bookingId/kitchen/health',
+    );
+    if (r.status != 200) return PassportResult.failure(_message(r));
+    return PassportResult.ok(KitchenHealth.fromJson(r.json));
   }
 
   Future<PassportResult<List<String>>> customBrands(String categoryId) async {

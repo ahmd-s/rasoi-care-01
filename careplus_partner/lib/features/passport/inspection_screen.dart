@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/widgets/care_widgets.dart';
 import '../../data/api/passport_api.dart';
 import '../../state/providers.dart';
+import 'health_widgets.dart';
 import 'inspection_catalog.dart';
 import 'passport_catalog.dart';
 
@@ -29,6 +30,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
   String? _loadError;
   String? _saveError;
   bool _dirty = false;
+  HealthAssessment? _health;
 
   @override
   void initState() {
@@ -77,6 +79,17 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
         _loadError = r.error;
       }
     });
+    if (r.ok) _refreshHealth();
+  }
+
+  /// The score is computed by the server from the saved answers; a failure to
+  /// fetch it just hides the panel — it never blocks the checklist.
+  Future<void> _refreshHealth() async {
+    final h = await ref
+        .read(passportApiProvider)
+        .applianceHealth(widget.jobId, widget.appliance.id);
+    if (!mounted) return;
+    setState(() => _health = h.ok ? h.value : null);
   }
 
   Future<void> _save() async {
@@ -114,6 +127,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
     if (r.ok) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Checklist saved')));
+      _refreshHealth();
     }
   }
 
@@ -160,6 +174,16 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
                             const SizedBox(height: 4),
                             ProgressBar(_items.isEmpty ? 0 : recorded / _items.length),
                             const SizedBox(height: 16),
+                            if (_health != null) ...[
+                              ApplianceHealthPanel(_health!),
+                              if (_dirty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text('Unsaved changes — save to update the score.',
+                                      style: context.type.bodySmall),
+                                ),
+                              const SizedBox(height: 16),
+                            ],
                             for (final item in _items) ...[
                               _CheckCard(
                                 item: item,
