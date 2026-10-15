@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:care_plus/data/mock_repository.dart';
 import 'package:care_plus/data/models.dart';
 
 void main() {
@@ -11,28 +12,26 @@ void main() {
     });
 
     test('comingSoon appliances are correctly marked', () {
-      expect(Appliance.refrigerator.comingSoon, true);
-      expect(Appliance.purifier.comingSoon, true);
-      
-      // Other appliances should not be coming soon
+      final repo = MockRepository();
+      const comingSoon = {Appliance.refrigerator, Appliance.purifier};
       for (final appliance in Appliance.values) {
-        if (appliance != Appliance.refrigerator && appliance != Appliance.purifier) {
-          expect(appliance.comingSoon, false,
-              reason: '${appliance.name} should not be marked as coming soon');
-        }
+        expect(repo.applianceDetail(appliance).comingSoon,
+            comingSoon.contains(appliance),
+            reason: '${appliance.name} comingSoon flag');
       }
     });
 
-    test('category round-trip through enum', () {
-      // Test that category values round-trip correctly
-      expect(Appliance.chimney.category, 'Chimney');
-      expect(Appliance.hob.category, 'Hob');
-      expect(Appliance.cooktop.category, 'Cooktop');
-      expect(Appliance.dishwasher.category, 'Dishwasher');
-      expect(Appliance.microwave.category, 'Microwave');
-      expect(Appliance.otg.category, 'OTG');
-      expect(Appliance.refrigerator.category, 'Refrigerator');
-      expect(Appliance.purifier.category, 'Water Purifier');
+    test('labels match expected display names', () {
+      expect({for (final a in Appliance.values) a: a.label}, {
+        Appliance.chimney: 'Kitchen chimney',
+        Appliance.hob: 'Gas hob',
+        Appliance.cooktop: 'Cooktop',
+        Appliance.dishwasher: 'Dishwasher',
+        Appliance.microwave: 'Built-in microwave',
+        Appliance.refrigerator: 'Refrigerator',
+        Appliance.otg: 'OTG',
+        Appliance.purifier: 'Water purifier',
+      });
     });
   });
 
@@ -59,13 +58,15 @@ void main() {
     test('service items have required fields', () {
       final service = ServiceItem(
         id: 's1',
-        name: 'Deep clean',
+        appliance: Appliance.chimney,
+        title: 'Deep clean',
+        blurb: 'Test blurb',
         pricePaise: 50000,
         durationMin: 60,
       );
 
       expect(service.id, 's1');
-      expect(service.name, 'Deep clean');
+      expect(service.title, 'Deep clean');
       expect(service.pricePaise, 50000);
       expect(service.durationMin, 60);
     });
@@ -73,7 +74,9 @@ void main() {
     test('included list can be empty', () {
       final service = ServiceItem(
         id: 's1',
-        name: 'Basic service',
+        appliance: Appliance.chimney,
+        title: 'Basic service',
+        blurb: 'Test blurb',
         pricePaise: 30000,
         durationMin: 45,
         included: const [],
@@ -85,7 +88,9 @@ void main() {
     test('included list can have multiple items', () {
       final service = ServiceItem(
         id: 's1',
-        name: 'Premium service',
+        appliance: Appliance.chimney,
+        title: 'Premium service',
+        blurb: 'Test blurb',
         pricePaise: 80000,
         durationMin: 90,
         included: const ['Filter cleaning', 'Motor check', 'Safety inspection'],

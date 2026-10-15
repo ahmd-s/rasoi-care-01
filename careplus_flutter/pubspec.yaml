@@ -48,3 +48,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   generate: true
+
+  # Bundled so google_fonts resolves these without a network fetch (tests run
+  # with allowRuntimeFetching = false). Names must match google_fonts'
+  # "<Family>-<Weight>.ttf" convention; add a file per weight the theme uses.
+  assets:
+    - assets/google_fonts/

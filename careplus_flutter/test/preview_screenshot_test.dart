@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:care_plus/core/theme/care_plus_theme.dart';
 import 'package:care_plus/core/widgets/appliance_illustration.dart';
 import 'package:care_plus/data/models.dart';
+import 'package:care_plus/l10n/app_localizations.dart';
 import 'package:care_plus/features/catalog/catalog_screens.dart';
 import 'package:care_plus/features/home/home_screen.dart';
 
@@ -22,8 +23,12 @@ const _boundaryKey = Key('preview_boundary');
 Future<void> _capture(WidgetTester tester, String name) async {
   final boundary = tester
       .renderObject<RenderRepaintBoundary>(find.byKey(_boundaryKey));
-  final image = await boundary.toImage(pixelRatio: 2.0);
-  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  // toImage/toByteData complete on the real event loop; inside testWidgets'
+  // FakeAsync zone they never resolve and the test hangs until timeout.
+  final bytes = await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 2.0);
+    return image.toByteData(format: ui.ImageByteFormat.png);
+  });
   final dir = Directory('build/preview');
   if (!dir.existsSync()) dir.createSync(recursive: true);
   File('${dir.path}/$name.png').writeAsBytesSync(bytes!.buffer.asUint8List());
@@ -33,6 +38,8 @@ Widget _wrap(Widget child) => ProviderScope(
       child: MaterialApp(
         theme: CarePlusTheme.light(),
         debugShowCheckedModeBanner: false,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: RepaintBoundary(key: _boundaryKey, child: child),
       ),
     );
