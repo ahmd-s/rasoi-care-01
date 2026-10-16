@@ -260,6 +260,7 @@ class AiInspection {
     required this.errorMessage,
     required this.result,
     required this.resultMalformed,
+    this.review,
   });
 
   /// Null when the payload has no usable id (nothing could be polled).
@@ -289,6 +290,7 @@ class AiInspection {
       errorMessage: err is Map ? _str(err['message']) : null,
       result: result,
       resultMalformed: malformed,
+      review: AiReview.tryParse(raw['review']),
     );
   }
 
@@ -303,6 +305,97 @@ class AiInspection {
 
   /// Completed, but the result payload was missing or not an object.
   final bool resultMalformed;
+
+  /// The technician's latest saved decision, if any.
+  final AiReview? review;
+}
+
+/// One finding's verdict inside a technician review.
+class AiFindingReview {
+  const AiFindingReview({
+    required this.code,
+    required this.confirmed,
+    required this.severity,
+    required this.note,
+  });
+  final String code;
+  final bool confirmed;
+  final String? severity;
+  final String note;
+}
+
+/// The technician's saved decision about an AI result (the server keeps it
+/// separate from the immutable AI result and never lets a client set a score).
+class AiReview {
+  const AiReview({
+    required this.id,
+    required this.revision,
+    required this.decision,
+    required this.reviewedScore,
+    required this.reviewedAt,
+    required this.findings,
+    required this.reason,
+  });
+
+  static AiReview? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final id = _str(raw['id']);
+    final decision = _str(raw['decision']);
+    if (id == null || !const ['accept', 'edit', 'reject'].contains(decision)) {
+      return null;
+    }
+    return AiReview(
+      id: id,
+      revision: _int(raw['revision']) ?? 1,
+      decision: decision!,
+      reviewedScore: _int(raw['reviewedScore']),
+      reviewedAt: _str(raw['reviewedAt']),
+      reason: _str(raw['reason']) ?? '',
+      findings: [
+        if (raw['findings'] is List)
+          for (final f in raw['findings'] as List)
+            if (f is Map && _str(f['code']) != null)
+              AiFindingReview(
+                code: f['code'] as String,
+                confirmed: f['decision'] == 'confirm',
+                severity: _str(f['severity']),
+                note: _str(f['note']) ?? '',
+              ),
+      ],
+    );
+  }
+
+  final String id;
+  final int revision;
+
+  /// accept | edit | reject
+  final String decision;
+  final int? reviewedScore;
+  final String? reviewedAt;
+  final List<AiFindingReview> findings;
+  final String reason;
+  bool get accepted => decision != 'reject';
+}
+
+/// What the technician decided for one finding when editing.
+class AiFindingDecision {
+  const AiFindingDecision({
+    required this.code,
+    required this.confirmed,
+    required this.severity,
+    this.note = '',
+  });
+  final String code;
+  final bool confirmed;
+  final String severity;
+  final String note;
+
+  Map<String, dynamic> toJson() => {
+    'code': code,
+    'decision': confirmed ? 'confirm' : 'reject',
+    'severity': severity,
+    if (note.isNotEmpty) 'note': note,
+  };
 }
 
 /// A photo to upload. Bytes live in memory only.
@@ -436,6 +529,40 @@ class VisionApi {
         for (final x in raw)
           if (AiInspection.tryParse(x) != null) AiInspection.tryParse(x)!,
     ]);
+  }
+
+  /// Saves the technician's decision about a completed analysis. [decision] is
+  /// accept | edit | reject; [findings] is only for edit. The score is never
+  /// sent: the server recomputes it. Reusing a [clientRequestId] after an
+  /// unconfirmed failure returns the original decision rather than a new one.
+  Future<AiResultOf<AiReview>> review(
+    String bookingId,
+    String applianceId,
+    String inspectionId, {
+    required String decision,
+    List<AiFindingDecision>? findings,
+    String? reason,
+    required String clientRequestId,
+  }) async {
+    final r = await _send(
+      'POST',
+      '${_base(bookingId, applianceId)}/$inspectionId/review',
+      body: {
+        'decision': decision,
+        if (findings != null)
+          'findings': [for (final f in findings) f.toJson()],
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+        'clientRequestId': clientRequestId,
+      },
+    );
+    if (r.status != 201 && r.status != 200) return AiResultOf.fail(_failure(r));
+    final review = AiReview.tryParse(r.json['review']);
+    if (review == null) {
+      return const AiResultOf.fail(
+        AiFailure('The server sent an unexpected reply.', status: 502),
+      );
+    }
+    return AiResultOf.ok(review);
   }
 
   Future<_Reply> _send(

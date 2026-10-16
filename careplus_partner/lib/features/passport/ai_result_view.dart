@@ -4,13 +4,9 @@ import '../../core/widgets/care_widgets.dart';
 import '../../data/api/vision_api.dart';
 
 const _advisoryBanner =
-    'AI visual assessment of photos only. It is advisory, is not part of the Kitchen '
-    'Health score, and cannot see hidden mechanical, electrical, gas or performance faults. '
+    'AI visual assessment of photos only. It is advisory, counts only after you accept it, '
+    'and cannot see hidden mechanical, electrical, gas or performance faults. '
     'Check everything yourself before acting on it.';
-
-const _readOnlyNote =
-    'Read-only. AI findings cannot be accepted or saved yet, and they never change the '
-    'checklist or the Kitchen Health score. Record your own assessment in the checklist.';
 
 ChipTone _toneForSeverity(String? s) => switch (s) {
   'high' || 'critical' => ChipTone.danger,
@@ -170,13 +166,6 @@ class AiResultView extends StatelessWidget {
               child: Text('• $l', style: context.type.bodySmall),
             ),
         ],
-        const SizedBox(height: 16),
-        _Banner(
-          icon: Icons.lock_outline,
-          text: _readOnlyNote,
-          tone: _BannerTone.info,
-          key: const ValueKey('ai-read-only-note'),
-        ),
       ],
     );
   }
@@ -194,8 +183,7 @@ class _ScoreLine extends StatelessWidget {
         Semantics(
           label: r.conditionScore == null
               ? 'Visual condition score: none'
-              : 'Visual condition score ${r.conditionScore} out of 100, from photos only, '
-                    'not used in the Kitchen Health score',
+              : 'Visual condition score ${r.conditionScore} out of 100, from photos only',
           excludeSemantics: true,
           child: Text(
             r.conditionScore == null
@@ -206,8 +194,10 @@ class _ScoreLine extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          'Not used in the Kitchen Health score.',
-          key: const ValueKey('ai-score-not-used'),
+          r.usedInHealthScore
+              ? 'Counted in the combined health score (30%) because you accepted this result.'
+              : 'Not used in the Kitchen Health score unless you accept this result.',
+          key: const ValueKey('ai-score-use'),
           style: context.type.bodySmall,
         ),
         if (r.scoreRationale != null)
@@ -281,7 +271,6 @@ enum _BannerTone { info, warning, danger }
 
 class _Banner extends StatelessWidget {
   const _Banner({
-    super.key,
     required this.icon,
     required this.text,
     required this.tone,

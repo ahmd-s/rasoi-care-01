@@ -34,6 +34,7 @@ Map<String, dynamic> _job(String status, {Object? result, Object? error}) => {
 };
 
 void main() {
+  reviewTests();
   test(
     'submit posts base64 photos with the bearer token and the request id',
     () async {
@@ -282,5 +283,141 @@ void main() {
       ),
     ).status('B-1', 'K', 'AIN-1');
     expect(r.ok, isFalse);
+  });
+}
+
+void reviewTests() {
+  test(
+    'review posts the decision and findings, never a score, and parses the reply',
+    () async {
+      late http.Request seen;
+      final api = _api(
+        MockClient((req) async {
+          seen = req;
+          return _json(201, {
+            'review': {
+              'id': 'KAR-1',
+              'revision': 2,
+              'decision': 'edit',
+              'reviewedScore': 85,
+              'reviewedAt': 't',
+              'reason': '',
+              'findings': [
+                {
+                  'code': 'a_code',
+                  'decision': 'confirm',
+                  'severity': 'low',
+                  'note': 'n',
+                },
+                {
+                  'code': 'b_code',
+                  'decision': 'reject',
+                  'severity': 'high',
+                  'note': '',
+                },
+              ],
+            },
+          });
+        }),
+      );
+      final r = await api.review(
+        'B-1',
+        'K',
+        'AIN-1',
+        decision: 'edit',
+        findings: const [
+          AiFindingDecision(
+            code: 'a_code',
+            confirmed: true,
+            severity: 'low',
+            note: 'n',
+          ),
+          AiFindingDecision(code: 'b_code', confirmed: false, severity: 'high'),
+        ],
+        clientRequestId: 'req-12345678',
+      );
+      expect(seen.method, 'POST');
+      expect(
+        seen.url.path,
+        '/api/technician/bookings/B-1/kitchen/appliances/K/ai-inspections/AIN-1/review',
+      );
+      expect(seen.headers['Authorization'], 'Bearer tok');
+      final body = jsonDecode(seen.body) as Map<String, dynamic>;
+      expect(body.keys.toSet(), {'decision', 'findings', 'clientRequestId'});
+      expect(jsonEncode(body).contains('Score'), isFalse);
+      expect(r.value!.revision, 2);
+      expect(r.value!.findings.map((f) => f.confirmed), [true, false]);
+      expect(r.value!.accepted, isTrue);
+    },
+  );
+
+  test(
+    'review errors keep the server message; a malformed reply is an error',
+    () async {
+      final refused =
+          await _api(
+            MockClient(
+              (_) async => _json(409, {
+                'code': 'booking_closed',
+                'message': 'This booking is completed.',
+              }),
+            ),
+          ).review(
+            'B-1',
+            'K',
+            'AIN-1',
+            decision: 'accept',
+            clientRequestId: 'req-12345678',
+          );
+      expect(refused.failure!.message, 'This booking is completed.');
+      expect(refused.failure!.status, 409);
+      final bad =
+          await _api(
+            MockClient(
+              (_) async => _json(201, {
+                'review': {'decision': 'maybe'},
+              }),
+            ),
+          ).review(
+            'B-1',
+            'K',
+            'AIN-1',
+            decision: 'accept',
+            clientRequestId: 'req-12345678',
+          );
+      expect(bad.ok, isFalse);
+      final net =
+          await _api(
+            MockClient((_) async => throw http.ClientException('x')),
+          ).review(
+            'B-1',
+            'K',
+            'AIN-1',
+            decision: 'accept',
+            clientRequestId: 'req-12345678',
+          );
+      expect(net.failure!.networkError, isTrue);
+    },
+  );
+
+  test('the inspection detail carries the saved review', () async {
+    final job = (await _api(
+      MockClient(
+        (_) async => _json(200, {
+          'inspection': {
+            ..._job('completed', result: {'findings': []}),
+            'review': {
+              'id': 'KAR-1',
+              'revision': 1,
+              'decision': 'reject',
+              'reviewedScore': null,
+              'findings': [],
+            },
+          },
+        }),
+      ),
+    ).status('B-1', 'K', 'AIN-1')).value!;
+    expect(job.review!.decision, 'reject');
+    expect(job.review!.accepted, isFalse);
   });
 }

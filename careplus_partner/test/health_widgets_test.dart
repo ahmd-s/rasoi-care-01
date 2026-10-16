@@ -14,6 +14,8 @@ HealthAssessment _assessment({
   String? message,
   bool safety = false,
   String coverage = '8 of 8 checks tested',
+  int? ai,
+  int? combined,
 }) =>
     HealthAssessment(
       score: score,
@@ -34,8 +36,8 @@ HealthAssessment _assessment({
       ],
       basisLabel: 'Technician assessment only',
       disclaimer: _disclaimer,
-      aiScore: null,
-      combinedScore: null,
+      aiScore: ai,
+      combinedScore: combined,
     );
 
 Future<void> _show(WidgetTester tester, Widget child) async {
@@ -142,5 +144,17 @@ void main() {
     expect(toneForStatus('priority'), ChipTone.warning);
     expect(toneForStatus('critical'), ChipTone.danger);
     expect(toneForStatus(null), ChipTone.neutral);
+  });
+
+  testWidgets('shows the accepted AI score and combined score only when present', (tester) async {
+    await _show(tester, ApplianceHealthPanel(_assessment()));
+    expect(find.byKey(const ValueKey('health-ai-line')), findsNothing);
+    await _show(tester, ApplianceHealthPanel(_assessment(ai: 55, combined: 83)));
+    expect(find.text('Combined score 83 = 70% your checks + 30% accepted AI visual score 55'),
+        findsOneWidget);
+    await _show(tester, ApplianceHealthPanel(_assessment(ai: 55)));
+    expect(find.textContaining('not counted until enough checks are tested'), findsOneWidget);
+    // The technician's own number is still the headline score.
+    expect(find.byKey(const ValueKey('health-score')), findsOneWidget);
   });
 }

@@ -523,7 +523,7 @@ KITCHEN_KEYS = {
     "scoreBasis", "scoreBasisLabel", "scoreStatus", "status", "statusLabel", "technicianScore",
 }
 KITCHEN_APPLIANCE_KEYS = {
-    "assessedAt", "brand", "category", "coverage", "flaggedItems", "id", "message", "model",
+    "aiScore", "combinedScore", "assessedAt", "brand", "category", "coverage", "flaggedItems", "id", "message", "model",
     "safetyFlagged", "safetyFlaggedItems", "scoreStatus", "status", "statusLabel", "technicianScore",
 }
 

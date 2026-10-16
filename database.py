@@ -325,6 +325,32 @@ CREATE INDEX IF NOT EXISTS ix_kitchen_ai_status_heartbeat
 CREATE INDEX IF NOT EXISTS ix_kitchen_ai_appliance_visit
     ON kitchen_ai_inspections (appliance_id, booking_id, created_at);
 
+-- Vision AI technician review (Stage C). APPEND-ONLY: a decision is never
+-- updated or deleted; a changed mind is a new revision, and the highest
+-- revision is the effective one. The AI result in kitchen_ai_inspections is
+-- never touched; result_sha256 binds each decision to the exact stored result
+-- it was made about.
+CREATE TABLE IF NOT EXISTS kitchen_ai_reviews (
+    id                TEXT PRIMARY KEY,
+    inspection_id     TEXT NOT NULL REFERENCES kitchen_ai_inspections(id),
+    appliance_id      TEXT NOT NULL REFERENCES kitchen_appliances(id),
+    booking_id        TEXT NOT NULL REFERENCES bookings(id),
+    technician_id     TEXT NOT NULL REFERENCES technicians(id),
+    revision          INTEGER NOT NULL,
+    decision          TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    finding_decisions TEXT NOT NULL DEFAULT '[]',
+    reason            TEXT NOT NULL DEFAULT '',
+    reviewed_score    INTEGER,
+    result_sha256     TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    UNIQUE (inspection_id, revision)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchen_ai_review_request
+    ON kitchen_ai_reviews (technician_id, client_request_id);
+CREATE INDEX IF NOT EXISTS ix_kitchen_ai_review_visit
+    ON kitchen_ai_reviews (appliance_id, booking_id);
+
 -- Brands a technician added via "Add Brand", reusable for that appliance
 -- category. name_key is the case-folded name so "bosch" and "Bosch" collide.
 CREATE TABLE IF NOT EXISTS custom_brands (

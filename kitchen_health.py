@@ -13,9 +13,10 @@ Rules (agreed for this slice):
   Critical 0-49.
 - A flagged (attention) safety item keeps the *status* from being Healthy
   (held at Attention) but never changes the calculated score.
-- The AI visual score does not exist yet: aiScore and combinedScore are null.
-  combined_score() implements the documented 70/30 blend and only returns a
-  value when both scores are genuinely available.
+- aiScore and combinedScore are null unless a technician has accepted a valid
+  Vision AI result for the same visit (see apply_ai_review). combined_score()
+  implements the documented 70/30 blend and only returns a value when both
+  scores are genuinely available.
 
 Scores are operational guidance, not a certification.
 """
@@ -162,6 +163,71 @@ def assess_appliance(category, saved, *, include_notes=False):
     }
 
 
+COMBINED_BASIS = "technician_plus_ai"
+COMBINED_BASIS_LABEL = "Technician assessment + accepted AI visual review"
+
+
+def apply_ai_review(assessment, review):
+    """Returns a copy of `assessment` with the technician-accepted AI visual
+    score folded in, or `assessment` unchanged when there is nothing eligible.
+
+    `review` is ai_review.effective_for_health(): present only for an
+    accepted/edited decision on a valid completed result. The technician score,
+    coverage, checklist answers and safety flags are never altered. The
+    combined score needs BOTH a real technician score and a real AI score; if
+    either is missing nothing is invented.
+
+    Headline status follows the combined score through the unchanged bands, but
+    can never be *better* than the technician's own band: clean photos cannot
+    upgrade a technician-assessed Attention/Priority/Critical appliance. The
+    safety cap applies to a flagged checklist safety item AND to a visible
+    safety finding the technician confirmed in the AI review."""
+    if not review:
+        return assessment
+    out = dict(assessment)
+    ai = review.get("aiScore")
+    out["aiScore"] = ai
+    summary = {
+        "available": True,
+        "inspectionId": review["inspectionId"],
+        "decision": review["decision"],
+        "reviewedAt": review["reviewedAt"],
+        "confirmedFindings": review["confirmedFindings"],
+        "confirmedSafetyFindings": list(review["confirmedSafetyFindings"]),
+    }
+    tech = assessment["technicianScore"]
+    combined = combined_score(tech, ai)
+    out["combinedScore"] = combined
+    if combined is None:
+        summary["reason"] = "technician_score_missing"
+        out["ai"] = summary
+        out["explanation"] = list(assessment["explanation"][:-1]) + [
+            "A technician-accepted AI visual review exists but is not counted until enough checks are tested.",
+            DISCLAIMER,
+        ]
+        return out
+    summary["reason"] = None
+    band = status_for_score(combined)
+    if _RANK[band] > _RANK[assessment["scoreStatus"]]:
+        band = assessment["scoreStatus"]
+    ai_safety = list(review["confirmedSafetyFindings"])
+    status = _cap_for_safety(band, assessment["safetyFlagged"] or bool(ai_safety))
+    out.update(_status_fields(status))
+    out["ai"] = summary
+    out["scoreBasis"] = COMBINED_BASIS
+    out["scoreBasisLabel"] = COMBINED_BASIS_LABEL
+    out["explanation"] = [
+        f"{COMBINED_BASIS_LABEL}. Combined {combined} = 70% technician {tech} + 30% AI visual {ai}, "
+        "using a result the technician accepted.",
+    ] + list(assessment["explanation"][1:-1])
+    if ai_safety:
+        out["explanation"].append(
+            f"{SAFETY_WARNING} in accepted AI review: " + ", ".join(ai_safety) + ". "
+            "Status is held below Healthy until a technician resolves it.")
+    out["explanation"].append(DISCLAIMER)
+    return out
+
+
 def latest_assessment(category, rows):
     """Picks the visit to report for one appliance from all its saved rows
     (dicts with booking_id, check_key, result, note, updated_at).
@@ -274,7 +340,7 @@ def summarize_kitchen(entries):
                 "assessedAt": e["assessedAt"],
                 **{k: e["assessment"][k] for k in (
                     "technicianScore", "scoreStatus", "status", "statusLabel", "coverage",
-                    "safetyFlagged", "safetyFlaggedItems", "message")},
+                    "safetyFlagged", "safetyFlaggedItems", "message", "aiScore", "combinedScore")},
                 "flaggedItems": [i["label"] for i in e["assessment"]["flaggedItems"]],
             }
             for e in entries

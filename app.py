@@ -29,6 +29,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import database
 import kitchen_health
 import kitchen_passport
+import ai_review
 import vision_guardrails
 import vision_images
 import vision_jobs
@@ -4475,6 +4476,10 @@ def _kitchen_health_entries(conn, user_id):
     for a in appliances:
         assessment, booking_id, assessed_at = kitchen_health.latest_assessment(
             a["category"], rows_by_appliance[a["id"]])
+        if booking_id:
+            # Only a technician-accepted, valid AI review for the SAME visit is folded in.
+            assessment = kitchen_health.apply_ai_review(
+                assessment, ai_review.effective_for_health(conn, a["id"], booking_id))
         entries.append({
             "id": a["id"], "category": a["category"], "brand": a["brand"], "model": a["model"],
             "assessment": assessment, "bookingId": booking_id, "assessedAt": assessed_at,
@@ -4498,9 +4503,11 @@ def get_kitchen_appliance_health(booking_id, appliance_id):
         "SELECT check_key, result, note FROM kitchen_inspection_checks "
         "WHERE appliance_id = ? AND booking_id = ?", (appliance_id, booking_id)
     ).fetchall()
+    review = ai_review.effective_for_health(conn, appliance_id, booking_id)
     conn.close()
     saved = {r["check_key"]: {"result": r["result"], "note": r["note"]} for r in rows}
     result = kitchen_health.assess_appliance(appliance["category"], saved, include_notes=True)
+    result = kitchen_health.apply_ai_review(result, review)
     result.update({"applianceId": appliance_id, "bookingId": booking_id})
     return jsonify(result)
 
@@ -4697,7 +4704,55 @@ def get_ai_inspection(booking_id, appliance_id, inspection_id):
         row = _ai_job_for(conn, booking_id, appliance_id, inspection_id)
         if not row:
             return jsonify({"error": "not found"}), 404
-        return jsonify({"inspection": vision_jobs.serialise(row)})
+        payload = vision_jobs.serialise(row)
+        review = ai_review.latest_review(conn, inspection_id)
+        payload["review"] = ai_review.serialise(review) if review else None
+        if payload["result"] is not None:
+            # The stored result is untouched; only this response says whether a
+            # technician has accepted it and whether it feeds the health score.
+            eligible = ai_review.effective_for_health(conn, appliance_id, booking_id)
+            payload["result"]["accepted"] = bool(review and review["decision"] in (ai_review.ACCEPT, ai_review.EDIT))
+            payload["result"]["usedInHealthScore"] = bool(eligible and eligible["inspectionId"] == inspection_id)
+        return jsonify({"inspection": payload})
+    finally:
+        conn.close()
+
+
+@app.route("/api/technician/bookings/<booking_id>/kitchen/appliances/<appliance_id>/ai-inspections/<inspection_id>/review",
+           methods=["POST"])
+@require_technician_auth
+def review_ai_inspection(booking_id, appliance_id, inspection_id):
+    """Records the technician's decision (accept / edit / reject) about an AI
+    result. Append-only: the AI result itself is never changed, and a repeat of
+    the same clientRequestId returns the original decision. Only the technician
+    who ran the analysis, on a booking still assigned to them and open, may
+    review it."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request", "message": "Request body must be a JSON object"}), 400
+    client_request_id = data.get("clientRequestId")
+    if not isinstance(client_request_id, str) or not kitchen_passport._REQUEST_ID_RE.match(client_request_id):
+        return jsonify({"error": "Invalid request",
+                        "fields": {"clientRequestId": "required: 8-64 letters, digits, '-' or '_'"}}), 400
+    conn = get_db()
+    try:
+        _uid, _appliance, err = _inspection_appliance(conn, booking_id, appliance_id, for_write=True)
+        if err:
+            return err
+        tech_id = request.technician["id"]
+        row = _ai_job_for(conn, booking_id, appliance_id, inspection_id)
+        # Someone else's analysis is indistinguishable from a missing one.
+        if not row or row["technician_id"] != tech_id:
+            return jsonify({"error": "not found"}), 404
+        try:
+            review, created = ai_review.create_review(conn, row, tech_id, data, client_request_id)
+        except ai_review.ReviewError as e:
+            body = {"error": "Invalid request" if e.status == 400 else "Conflict",
+                    "code": e.code, "message": e.message}
+            if e.fields:
+                body["fields"] = e.fields
+            return jsonify(body), e.status
+        return jsonify({"review": ai_review.serialise(review)}), 201 if created else 200
     finally:
         conn.close()
 

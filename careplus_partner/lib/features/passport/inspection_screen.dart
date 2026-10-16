@@ -186,9 +186,13 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
                             ],
                             OutlinedButton.icon(
                               key: const ValueKey('open-ai-inspection'),
-                              onPressed: () => context.push(
-                                  '/tech/job/${widget.jobId}/kitchen/appliance/${widget.appliance.id}/ai-inspection',
-                                  extra: widget.appliance),
+                              onPressed: () async {
+                                await context.push(
+                                    '/tech/job/${widget.jobId}/kitchen/appliance/${widget.appliance.id}/ai-inspection',
+                                    extra: widget.appliance);
+                                // An accepted AI review changes the combined score.
+                                if (mounted) _refreshHealth();
+                              },
                               icon: const Icon(Icons.photo_camera_outlined),
                               label: const Text('Photo inspection (AI, advisory)'),
                             ),

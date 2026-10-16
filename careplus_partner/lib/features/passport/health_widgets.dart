@@ -33,6 +33,18 @@ class ApplianceHealthPanel extends StatelessWidget {
             caption: health.coverageLabel,
             emptyMessage: health.message,
           ),
+          if (health.aiScore != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              health.combinedScore != null
+                  ? 'Combined score ${health.combinedScore} = 70% your checks + 30% accepted '
+                        'AI visual score ${health.aiScore}'
+                  : 'Accepted AI visual score ${health.aiScore} (not counted until enough '
+                        'checks are tested)',
+              key: const ValueKey('health-ai-line'),
+              style: context.type.bodySmall,
+            ),
+          ],
           if (health.safetyFlagged) ...[
             const SizedBox(height: 12),
             _SafetyBanner(

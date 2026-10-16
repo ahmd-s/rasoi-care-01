@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -11,6 +12,7 @@ import '../../data/api/passport_api.dart';
 import '../../data/api/vision_api.dart';
 import '../../state/providers.dart';
 import 'ai_result_view.dart';
+import 'ai_review_panel.dart';
 import 'passport_catalog.dart';
 import 'photo_source.dart';
 
@@ -71,6 +73,11 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
   bool _offline = false;
   bool _pollingStopped = false;
   String? _statusError;
+  // Review saves: the id is reused only for the SAME decision after an
+  // unconfirmed failure, so a resend can't create a second revision.
+  String? _reviewRequestId;
+  String? _reviewFingerprint;
+  bool _reviewing = false;
 
   VisionApi get _api => ref.read(visionApiProvider);
   String get _categoryLabel =>
@@ -324,6 +331,53 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
       _statusError = null;
     });
     _poll();
+  }
+
+  // ----------------------------------------------------------------- review
+  /// Saves the technician's decision. Returns an error message, or null once
+  /// the server has confirmed it and the result has been reloaded.
+  Future<String?> _submitReview(
+    String decision,
+    List<AiFindingDecision>? findings,
+  ) async {
+    final job = _job;
+    if (_reviewing || job == null) return null;
+    _reviewing = true;
+    final fingerprint =
+        '$decision|${findings?.map((f) => jsonEncode(f.toJson())).join(',')}';
+    if (_reviewRequestId == null || _reviewFingerprint != fingerprint) {
+      _reviewRequestId = _newRequestId();
+      _reviewFingerprint = fingerprint;
+    }
+    final r = await _api.review(
+      widget.jobId,
+      widget.appliance.id,
+      job.id,
+      decision: decision,
+      findings: findings,
+      clientRequestId: _reviewRequestId!,
+    );
+    _reviewing = false;
+    if (!r.ok) {
+      final f = r.failure!;
+      if (!mounted) return null;
+      // A definite refusal (4xx) means a later attempt is a new request.
+      if (f.status >= 400 && f.status < 500) _reviewRequestId = null;
+      return f.networkError
+          ? '${f.message} Your decision may or may not have been saved — tap again to retry safely.'
+          : f.message;
+    }
+    _reviewRequestId = null;
+    if (!mounted) return null;
+    // Reload so the result shows what the server now says (accepted / used in score).
+    final fresh = await _api.status(widget.jobId, widget.appliance.id, job.id);
+    if (!mounted) return null;
+    if (fresh.ok) {
+      _handleJob(fresh.value!);
+    } else {
+      return 'Saved, but the screen could not refresh. ${fresh.failure!.message}';
+    }
+    return null;
   }
 
   // ------------------------------------------------------------- navigation
@@ -660,6 +714,13 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
         }
         return _scroll([
           AiResultView(result),
+          const SizedBox(height: 16),
+          AiReviewPanel(
+            key: ValueKey('review-${job.id}'),
+            result: result,
+            review: job.review,
+            onSubmit: _submitReview,
+          ),
           const SizedBox(height: 16),
           OutlinedButton(
             onPressed: _newPhotos,

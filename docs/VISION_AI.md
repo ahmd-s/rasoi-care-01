@@ -6,8 +6,9 @@ output, and the existing validation pipeline. With default configuration AI is
 off: every submission is refused with `503 ai_unavailable` and Kitchen Health
 scores stay technician-only.
 
-Not in this stage: technician acceptance and any change to the Kitchen Health formula. `aiScore` and `combinedScore` in the
-health endpoints remain `null`.
+Stage C (technician review) is implemented: see the last section. The 70/30 blend
+is unchanged and `aiScore` / `combinedScore` stay `null` until a technician
+accepts a valid result.
 
 ## Configuration (server environment only)
 
@@ -200,3 +201,56 @@ health endpoints from this screen. Strings on the new screens are English-only,
 like the other Kitchen Passport screens. Verified with Flutter widget tests
 against fake API/picker objects only; not yet exercised on a device, with real
 camera/gallery permission prompts, or against a real provider.
+
+## Stage C — technician review and the combined score
+
+**Endpoint:** `POST …/ai-inspections/<id>/review`
+`{decision: accept|edit|reject, findings?: [{code, decision: confirm|reject, severity?, note?}], reason?, clientRequestId}`
+(`clientRequestId` is required, 8–64 chars). `201` new decision, `200` replay.
+`GET …/ai-inspections/<id>` now also returns `review` (the latest decision or
+`null`) and sets `result.accepted` / `result.usedInHealthScore` **in the
+response only**.
+
+**Storage.** Decisions live in the append-only table `kitchen_ai_reviews`
+(technician id, UTC timestamp, revision, per-finding decisions, reason, the
+server-recomputed `reviewed_score`, and `result_sha256` of the AI result they
+were made about). Rows are never updated or deleted; changing a decision adds a
+revision (max 10). `kitchen_ai_inspections.result_json` is never modified.
+
+**Who may review.** The technician who ran the analysis, on a booking still
+assigned to them and not Completed/Cancelled (`409 booking_closed`). Anyone
+else, any foreign appliance/booking/inspection id, gets `404`. A reassigned
+booking's new technician cannot review the previous technician's analysis.
+
+**Validation.** Only completed results with a readable stored result can be
+reviewed. `accept` takes no per-finding data; `edit` must decide every finding
+the AI returned (by code; none can be added), severities must be
+low/medium/high/critical, at least one finding must stay confirmed (otherwise
+use `reject`), notes/reasons are ≤300 chars and pass the same prohibited-claim
+and untrusted-text scan as AI output. Results with unclear photos (no score)
+can only be rejected. Any score the client sends is ignored.
+
+**Score.** `accept` uses the stored server-computed condition score; `edit`
+recomputes it from the confirmed findings (with the technician's severities)
+using the same fixed penalties. The AI score is used only when ALL hold: the
+newest completed analysis of that appliance for the visit has a latest decision
+of accept/edit; it has a score; its stored result still hashes to what was
+reviewed; and the technician score for the same visit exists (>= 6 of 8 checks).
+Then `combinedScore = round-half-up(0.7 × technician + 0.3 × AI)`. Rejected,
+unreviewed, superseded (a newer analysis exists) or tampered results change
+nothing; no value is ever invented.
+
+**Status.** `technicianScore`, coverage, checklist answers and the checklist
+safety flags are never altered. The headline `status` follows the combined
+score through the unchanged bands (85/70/50) but is capped at the technician's
+own band, so clean photos cannot upgrade a technician-assessed
+Attention/Priority/Critical appliance; and a visible safety-relevant finding
+the technician confirmed holds the status below Healthy (the same cap as a
+flagged checklist safety item). Both rules only ever lower a status.
+
+**Not done in this stage:** the kitchen-level `aiScore` / `combinedScore` stay
+`null` (only per-appliance rows carry them; the kitchen average is still
+technician-only); no customer-facing Passport UI; no per-visit history or
+trends. Verified on SQLite only (see the test suite); not on managed
+PostgreSQL. Timestamps have one-second resolution, so two analyses completed in
+the same second have arbitrary order for the "newest analysis" rule.
