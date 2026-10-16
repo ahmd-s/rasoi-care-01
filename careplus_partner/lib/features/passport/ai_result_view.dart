@@ -75,7 +75,16 @@ class AiResultView extends StatelessWidget {
               if (r.urgency != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  'Suggested urgency: ${_capitalise(r.urgency!)}',
+                  'Suggested urgency: ${_capitalise(r.urgency!)}'
+                  '${r.estimatedDays == null ? '' : (r.estimatedDays == 0 ? ' · service now' : ' · service within ${r.estimatedDays} days')}',
+                  key: const ValueKey('ai-urgency'),
+                  style: context.type.bodySmall,
+                ),
+              ],
+              if (r.focusAreas.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Looked at: ${r.focusAreas.join(', ')}',
                   style: context.type.bodySmall,
                 ),
               ],

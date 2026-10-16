@@ -70,6 +70,8 @@ Map<String, dynamic> _result({
   'scoreRationale': 'Computed by the server.',
   'findings': findings,
   'urgency': 'soon',
+  'estimatedDays': 21,
+  'focusAreas': ['burners', 'glass'],
   'recommendation': 'Review the visible items.',
   'limitations': ['Photos cannot show internal faults.'],
   'notAssessableChecks': ['Gas flow'],
@@ -501,6 +503,11 @@ void main() {
         expect(find.widgetWithText(TextButton, label), findsNothing);
       }
       expect(find.byKey(const ValueKey('ai-read-only-note')), findsOneWidget);
+      expect(
+        find.text('Suggested urgency: Soon · service within 21 days'),
+        findsOneWidget,
+      );
+      expect(find.text('Looked at: burners, glass'), findsOneWidget);
     },
   );
 

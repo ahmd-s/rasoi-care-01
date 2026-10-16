@@ -172,6 +172,8 @@ class AiResult {
     required this.scoreRationale,
     required this.findings,
     required this.urgency,
+    required this.estimatedDays,
+    required this.focusAreas,
     required this.recommendation,
     required this.inconsistencies,
     required this.limitations,
@@ -198,6 +200,8 @@ class AiResult {
             if (AiFinding.tryParse(f) != null) AiFinding.tryParse(f)!,
       ],
       urgency: _str(j['urgency']),
+      estimatedDays: _int(j['estimatedDays']),
+      focusAreas: _strings(j['focusAreas']),
       recommendation: _str(j['recommendation']),
       inconsistencies: [
         if (j['inconsistencies'] is List)
@@ -226,6 +230,12 @@ class AiResult {
   final String? scoreRationale;
   final List<AiFinding> findings;
   final String? urgency;
+
+  /// Server-suggested days until the next service for this urgency.
+  final int? estimatedDays;
+
+  /// What this appliance's visual profile looks at.
+  final List<String> focusAreas;
   final String? recommendation;
   final List<AiInconsistency> inconsistencies;
   final List<String> limitations;
