@@ -23,6 +23,9 @@ get a URL that an actual phone can reach.
 
 ## Run it locally (to test on one machine)
 
+> Running the Flutter apps against this backend? Debug builds refuse to default to
+> production and need `--dart-define=API_BASE_URL=...`; see [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
+
 ```bash
 pip install -r requirements.txt
 python3 app.py

@@ -6,12 +6,24 @@ import json
 
 import pytest
 
+import vision_provider as vp
+
 import kitchen_health
 from conftest import auth_headers, register_and_login
 from test_vision_jobs import H, HOB_KEYS, _booking, _register, _vision_state, ctx  # noqa: F401
 from test_vision_review import (RESIDUE, _analyse, _finding, _reply, _review, _save_checks)  # noqa: F401
 
 URL = "/api/kitchen-passport/overview"
+
+@pytest.fixture(autouse=True)
+def _provider_is_not_simulated(monkeypatch):
+    """These tests exercise score integration, which only real (non-simulated)
+    providers may feed. FakeProvider is simulated by default, so model a real
+    provider here; tests/test_vision_simulated.py covers the simulated case."""
+    monkeypatch.setattr(vp.FakeProvider, "simulated", False)
+    monkeypatch.setattr(vp.FakeProvider, "name", "stub-real")
+    monkeypatch.setattr(vp.FakeProvider, "model", "stub-real-v1")
+
 
 
 def _get(client, user):

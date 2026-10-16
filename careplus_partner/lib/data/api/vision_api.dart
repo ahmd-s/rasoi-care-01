@@ -72,12 +72,14 @@ class AiConfig {
     required this.recommendedJpegQuality,
     required this.maxSubmissionsPerVisit,
     required this.privacyNotice,
+    this.simulated = false,
   });
 
   /// Only an explicit `enabled: true` enables the feature; anything missing
   /// or malformed falls back to disabled and the documented upload limits.
   factory AiConfig.fromJson(Map<String, dynamic> j) => AiConfig(
     enabled: j['enabled'] == true,
+    simulated: j['simulated'] == true,
     minImages: _int(j['minImages']) ?? 1,
     maxImages: _int(j['maxImages']) ?? 5,
     maxImageBytes: _int(j['maxImageBytes']) ?? 1500000,
@@ -104,6 +106,9 @@ class AiConfig {
   final int recommendedJpegQuality;
   final int? maxSubmissionsPerVisit;
   final String privacyNotice;
+
+  /// True when the server's active provider fabricates output (test mode).
+  final bool simulated;
 }
 
 class AiFinding {
@@ -184,6 +189,7 @@ class AiResult {
     required this.disclaimer,
     required this.accepted,
     required this.usedInHealthScore,
+    this.simulated = false,
     required this.analyzedAt,
   });
 
@@ -220,6 +226,7 @@ class AiResult {
       disclaimer: _str(j['disclaimer']),
       accepted: j['accepted'] == true,
       usedInHealthScore: j['usedInHealthScore'] == true,
+      simulated: j['simulated'] == true,
       analyzedAt: _str(j['analyzedAt']),
     );
   }
@@ -246,6 +253,10 @@ class AiResult {
   final String? disclaimer;
   final bool accepted;
   final bool usedInHealthScore;
+
+  /// Produced by a test provider: not a real inspection and never used in a
+  /// score. Set by the server; the app only displays it.
+  final bool simulated;
   final String? analyzedAt;
 }
 
@@ -333,6 +344,7 @@ class AiReview {
     required this.decision,
     required this.reviewedScore,
     required this.reviewedAt,
+    this.simulated = false,
     required this.findings,
     required this.reason,
   });
@@ -350,6 +362,7 @@ class AiReview {
       decision: decision!,
       reviewedScore: _int(raw['reviewedScore']),
       reviewedAt: _str(raw['reviewedAt']),
+      simulated: raw['simulated'] == true,
       reason: _str(raw['reason']) ?? '',
       findings: [
         if (raw['findings'] is List)
@@ -372,6 +385,7 @@ class AiReview {
   final String decision;
   final int? reviewedScore;
   final String? reviewedAt;
+  final bool simulated;
   final List<AiFindingReview> findings;
   final String reason;
   bool get accepted => decision != 'reject';

@@ -313,6 +313,9 @@ CREATE TABLE IF NOT EXISTS kitchen_ai_inspections (
     image_hashes      TEXT NOT NULL DEFAULT '[]',
     result_json       TEXT,
     condition_score   INTEGER,
+    -- 1 when a simulated (test) provider produced the result. Written by the
+    -- server from the provider object that actually ran, never from a request.
+    simulated         INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT NOT NULL,
     started_at        TEXT,
     completed_at      TEXT,
@@ -343,6 +346,9 @@ CREATE TABLE IF NOT EXISTS kitchen_ai_reviews (
     reason            TEXT NOT NULL DEFAULT '',
     reviewed_score    INTEGER,
     result_sha256     TEXT NOT NULL,
+    -- Copied from the inspection at review time; a simulated result's review
+    -- never feeds a health score.
+    simulated         INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT NOT NULL,
     UNIQUE (inspection_id, revision)
 );
@@ -1183,6 +1189,20 @@ def migrate_home_services_columns(conn):
     conn.commit()
 
 
+def migrate_vision_simulated_columns(conn):
+    """Adds the `simulated` marker to Vision AI tables created before it
+    existed, and backfills it for results a fake provider already produced
+    (identified by the provider/model the server recorded). Idempotent."""
+    for table in ("kitchen_ai_inspections", "kitchen_ai_reviews"):
+        if "simulated" not in _table_columns(conn, table):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN simulated INTEGER NOT NULL DEFAULT 0")
+    conn.execute("UPDATE kitchen_ai_inspections SET simulated = 1 "
+                 "WHERE simulated = 0 AND (provider = 'fake' OR model LIKE 'fake%')")
+    conn.execute("UPDATE kitchen_ai_reviews SET simulated = 1 WHERE simulated = 0 AND inspection_id IN "
+                 "(SELECT id FROM kitchen_ai_inspections WHERE simulated = 1)")
+    conn.commit()
+
+
 def migrate_users_columns(conn):
     """Care Coins loyalty balance — earned automatically when a booking is
     marked Completed (2% of its real total, see advance_booking in app.py),
@@ -1252,6 +1272,7 @@ def _init_db_contents(conn):
     migrate_technicians_columns(conn)
     migrate_firebase_columns(conn)
     migrate_users_columns(conn)
+    migrate_vision_simulated_columns(conn)
     migrate_home_services_columns(conn)
     seed_catalog(conn)
     migrate_add_customer_catalog_services(conn)

@@ -52,6 +52,10 @@ class VisionRequest:
 class VisionProvider:
     name = "base"
     model = "none"
+    # True for providers that fabricate output (tests / local demos). The job
+    # runner persists this with the inspection, and a simulated result is never
+    # allowed to contribute to any health score, accepted or not.
+    simulated = False
 
     def analyze(self, request):  # pragma: no cover - interface
         raise NotImplementedError
@@ -81,6 +85,7 @@ class FakeProvider(VisionProvider):
 
     name = "fake"
     model = "fake-vision-v1"
+    simulated = True
 
     def __init__(self, script=None):
         self.script = list(script or [])

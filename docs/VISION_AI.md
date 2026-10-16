@@ -254,3 +254,23 @@ technician-only); no customer-facing Passport UI; no per-visit history or
 trends. Verified on SQLite only (see the test suite); not on managed
 PostgreSQL. Timestamps have one-second resolution, so two analyses completed in
 the same second have arbitrary order for the "newest analysis" rule.
+
+## Simulated results (test provider)
+
+`FakeProvider` is **simulated**. When the job runner calls a provider it records
+`simulated` (from the provider object that actually ran) on the inspection row;
+a review copies it from the inspection, never from the request. A simulated
+result:
+- is exposed as `simulated: true` on the inspection, its `result` and its
+  `review`, and `GET …/ai-inspection/config` reports `simulated: true` while a
+  simulated provider is active;
+- is shown in the Partner app with "SIMULATED — NOT A REAL INSPECTION";
+- can be reviewed (for testing the UI) but is **never** used in any health score:
+  `effective_for_health` returns nothing for it, so technician health, the
+  kitchen summary and the customer Passport ignore it;
+- keeps the marker even if the stored flag is cleared, because a provider named
+  `fake` / a model starting `fake` is also treated as simulated.
+
+Customers never see AI result content, so there is no customer-facing banner;
+the customer Passport simply never includes a simulated result. Results written
+before the marker existed are backfilled by `migrate_vision_simulated_columns`.

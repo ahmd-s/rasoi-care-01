@@ -4591,8 +4591,11 @@ def _ai_job_for(conn, booking_id, appliance_id, inspection_id):
 def ai_inspection_config():
     """What the Partner app needs before offering photo capture. No secrets
     and no provider details."""
+    active = vision_provider.get_provider()
     return jsonify({
-        "enabled": vision_provider.get_provider() is not None and not vision_jobs.breaker.is_open(),
+        "enabled": active is not None and not vision_jobs.breaker.is_open(),
+        # True when the active provider fabricates output (tests / demos).
+        "simulated": bool(getattr(active, "simulated", False)),
         "minImages": vision_images.MIN_IMAGES,
         "maxImages": vision_images.MAX_IMAGES,
         "maxImageBytes": vision_images.MAX_IMAGE_BYTES,

@@ -7,10 +7,19 @@ import 'core/theme/care_plus_theme.dart';
 import 'l10n/app_localizations.dart';
 import 'state/providers.dart';
 import 'app/router.dart';
+import 'data/api/api_config.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Debug/profile builds must not silently talk to production: fail fast with
+  // a visible, actionable message instead (see lib/data/api/api_config.dart).
+  final apiProblem = ApiConfig.debugProblem();
+  if (apiProblem != null) {
+    debugPrint(apiProblem);
+    runApp(ApiConfigErrorApp(apiProblem));
+    return;
+  }
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)
         .timeout(const Duration(seconds: 3));

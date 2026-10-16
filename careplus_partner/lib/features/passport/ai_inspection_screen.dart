@@ -480,6 +480,10 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (cfg.simulated) ...[
+                      const SimulatedBanner(compact: true),
+                      const SizedBox(height: 12),
+                    ],
                     const Eyebrow('Before you take photos'),
                     const SizedBox(height: 6),
                     Text(

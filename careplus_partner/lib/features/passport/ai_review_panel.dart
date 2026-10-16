@@ -142,7 +142,9 @@ class _AiReviewPanelState extends State<AiReviewPanel> {
     ),
     const SizedBox(height: 4),
     Text(
-      r.accepted && r.reviewedScore != null
+      widget.result.simulated
+          ? 'Saved. Because this result is simulated, it is not used in any score.'
+          : r.accepted && r.reviewedScore != null
           ? 'Saved. The AI visual score is ${r.reviewedScore}/100 from the findings you confirmed. '
                 'It is blended into the appliance health score only together with your own checklist '
                 '(70% yours, 30% AI).'
@@ -171,6 +173,15 @@ class _AiReviewPanelState extends State<AiReviewPanel> {
           : 'Choose a new decision. It is saved as a new revision.',
       style: Theme.of(context).textTheme.bodySmall,
     ),
+    if (widget.result.simulated) ...[
+      const SizedBox(height: 6),
+      Text(
+        'This result is simulated. Your decision is recorded for testing, but it will never '
+        'change any score.',
+        key: const ValueKey('ai-review-simulated-note'),
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    ],
     if (!_canAccept) ...[
       const SizedBox(height: 6),
       Text(

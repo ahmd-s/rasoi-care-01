@@ -31,6 +31,10 @@ class AiResultView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (r.simulated) ...[
+          const SimulatedBanner(),
+          const SizedBox(height: 12),
+        ],
         _Banner(
           icon: Icons.info_outline,
           text: r.disclaimer ?? _advisoryBanner,
@@ -194,7 +198,9 @@ class _ScoreLine extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          r.usedInHealthScore
+          r.simulated
+              ? 'Simulated: never used in any health score.'
+              : r.usedInHealthScore
               ? 'Counted in the combined health score (30%) because you accepted this result.'
               : 'Not used in the Kitchen Health score unless you accept this result.',
           key: const ValueKey('ai-score-use'),
@@ -262,6 +268,58 @@ class _FindingCard extends StatelessWidget {
             Text(f.recommendation!, style: context.type.bodySmall),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Shown wherever a simulated (test-provider) result is displayed. The server
+/// decides whether a result is simulated; the app only makes it unmistakable.
+class SimulatedBanner extends StatelessWidget {
+  const SimulatedBanner({super.key, this.compact = false});
+
+  /// Capture-screen variant: results have not been produced yet.
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = context.scheme.error;
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: Container(
+        key: const ValueKey('ai-simulated-banner'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color, width: 2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              compact
+                  ? 'TEST MODE — RESULTS WILL BE SIMULATED'
+                  : 'SIMULATED — NOT A REAL INSPECTION',
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              compact
+                  ? 'The server is using a test provider. Whatever it returns says nothing real about '
+                        'this appliance and is never used in any health score.'
+                  : 'A test provider produced this. It says nothing real about this appliance, '
+                        'so do not act on it. It is never used in any health score, even if you accept it.',
+              style: context.type.bodySmall,
+            ),
+          ],
+        ),
       ),
     );
   }

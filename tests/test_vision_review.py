@@ -16,6 +16,16 @@ from test_vision_jobs import (H, HOB_KEYS, _booking, _images, _make_tech, _regis
 RESIDUE, BURN = "burner_residue_visible", "burn_marks_visible"
 EVIDENCE = "Residue and discolouration are visible on the surface in the first photo."
 
+@pytest.fixture(autouse=True)
+def _provider_is_not_simulated(monkeypatch):
+    """These tests exercise score integration, which only real (non-simulated)
+    providers may feed. FakeProvider is simulated by default, so model a real
+    provider here; tests/test_vision_simulated.py covers the simulated case."""
+    monkeypatch.setattr(vp.FakeProvider, "simulated", False)
+    monkeypatch.setattr(vp.FakeProvider, "name", "stub-real")
+    monkeypatch.setattr(vp.FakeProvider, "model", "stub-real-v1")
+
+
 
 def _finding(code, severity="medium", confidence=0.9):
     return {"code": code, "severity": severity, "confidence": confidence, "evidence": EVIDENCE, "photoIndexes": [0]}

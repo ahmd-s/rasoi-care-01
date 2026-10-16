@@ -308,9 +308,22 @@ def _claim(job_id):
     return _owned_update(job_id, "status = 'running', started_at = ?", (stamp,), expect=QUEUED)
 
 
+def is_simulated(row):
+    """Whether an inspection row came from a simulated provider. The persisted
+    marker is authoritative; the recorded provider/model name is a second line
+    of defence for rows written before the marker existed."""
+    keys = row.keys()
+    return bool(
+        ("simulated" in keys and row["simulated"])
+        or (row["provider"] or "") == "fake"
+        or (row["model"] or "").startswith("fake")
+    )
+
+
 def _mark_call(job_id, provider):
-    return _owned_update(job_id, "provider_called = 1, attempts = attempts + 1, provider = ?, model = ?",
-                         (provider.name, provider.model))
+    return _owned_update(
+        job_id, "provider_called = 1, attempts = attempts + 1, provider = ?, model = ?, simulated = ?",
+        (provider.name, provider.model, 1 if getattr(provider, "simulated", False) else 0))
 
 
 def _fail(job_id, code, message, retryable, status=FAILED, expect=RUNNING):
@@ -409,10 +422,11 @@ def _complete(job_id, ctx, provider, validated):
         stamp = database.now()
         changed = conn.execute(
             "UPDATE kitchen_ai_inspections SET status = 'completed', result_json = ?, condition_score = ?, "
-            "retryable = 0, error_code = '', error_message = '', provider = ?, model = ?, "
+            "retryable = 0, error_code = '', error_message = '', provider = ?, model = ?, simulated = ?, "
             "completed_at = ?, updated_at = ?, heartbeat_at = ? "
             "WHERE id = ? AND worker_id = ? AND status = 'running'",
             (json.dumps(result), result["conditionScore"], provider.name, provider.model,
+             1 if getattr(provider, "simulated", False) else 0,
              stamp, stamp, stamp, job_id, WORKER_ID),
         ).rowcount
     if changed != 1:
@@ -549,6 +563,9 @@ def serialise(row, *, include_result=True):
         result.update({
             "inspectionId": row["id"], "applianceId": row["appliance_id"], "bookingId": row["booking_id"],
             "model": row["model"], "analyzedAt": row["completed_at"],
+            # From the persisted row, so it cannot be changed through the stored
+            # result or any request field.
+            "simulated": is_simulated(row),
         })
     error = None
     if row["status"] in (FAILED, REJECTED):
@@ -561,6 +578,7 @@ def serialise(row, *, include_result=True):
         "retryable": bool(row["retryable"]),
         "attempts": row["attempts"],
         "imageCount": row["image_count"],
+        "simulated": is_simulated(row),
         "createdAt": row["created_at"],
         "startedAt": row["started_at"],
         "completedAt": row["completed_at"],

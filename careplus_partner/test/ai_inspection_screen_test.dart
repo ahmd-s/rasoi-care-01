@@ -32,8 +32,10 @@ AiConfig _config({
   bool enabled = true,
   int maxImages = 3,
   int maxImageBytes = 1000,
+  bool simulated = false,
 }) => AiConfig(
   enabled: enabled,
+  simulated: simulated,
   minImages: 1,
   maxImages: maxImages,
   maxImageBytes: maxImageBytes,
@@ -66,6 +68,7 @@ Map<String, dynamic> _result({
   List<Map<String, dynamic>> findings = const [],
   int? score = 85,
   bool used = false,
+  bool simulated = false,
 }) => {
   'applianceProfile': 'Hob / Cooktop',
   'summary': 'Summary from server.',
@@ -87,6 +90,7 @@ Map<String, dynamic> _result({
   'disclaimer': 'AI visual assessment of photos only.',
   'accepted': false,
   'usedInHealthScore': used,
+  'simulated': simulated,
 };
 
 const _safetyFinding = {
@@ -1077,6 +1081,165 @@ void main() {
         expect(find.byKey(const ValueKey('ai-review-accept')), findsOneWidget);
         expect(find.textContaining('saved as a new revision'), findsOneWidget);
         expect(api.reviewCalls, isEmpty);
+      },
+    );
+  });
+
+  group('simulated results', () {
+    Future<_FakeVision> reach(
+      WidgetTester tester, {
+      bool simulated = true,
+      bool used = false,
+    }) async {
+      final api = _FakeVision(config: _config(simulated: simulated))
+        ..submitResults.add(
+          AiResultOf.ok(
+            _job(
+              'completed',
+              result: _result(
+                findings: [_safetyFinding],
+                simulated: simulated,
+                used: used,
+              ),
+            ),
+          ),
+        );
+      final cam = _FakeCamera();
+      await _pump(tester, api, cam);
+      return api;
+    }
+
+    testWidgets('capture screen warns that results will be simulated', (
+      tester,
+    ) async {
+      await reach(tester);
+      expect(find.byKey(const ValueKey('ai-simulated-banner')), findsOneWidget);
+      expect(
+        find.text('TEST MODE — RESULTS WILL BE SIMULATED'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('no capture warning for a real provider', (tester) async {
+      await reach(tester, simulated: false);
+      expect(find.byKey(const ValueKey('ai-simulated-banner')), findsNothing);
+    });
+
+    testWidgets('the results screen shows an unmistakable simulated banner', (
+      tester,
+    ) async {
+      final api = _FakeVision(config: _config(simulated: true))
+        ..submitResults.add(
+          AiResultOf.ok(
+            _job(
+              'completed',
+              result: _result(findings: [_safetyFinding], simulated: true),
+            ),
+          ),
+        );
+      final cam = _FakeCamera();
+      await _pump(tester, api, cam);
+      await _take(tester, cam, _jpeg(1));
+      await tester.tap(_analyse);
+      await tester.pumpAndSettle();
+      expect(find.text('SIMULATED — NOT A REAL INSPECTION'), findsOneWidget);
+      expect(
+        find.textContaining('never used in any health score'),
+        findsWidgets,
+      );
+      expect(
+        find.text('Simulated: never used in any health score.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'a simulated result never says it counts toward a score, even if flagged as used',
+      (tester) async {
+        final api = _FakeVision(config: _config(simulated: true))
+          ..submitResults.add(
+            AiResultOf.ok(
+              _job('completed', result: _result(simulated: true, used: true)),
+            ),
+          );
+        final cam = _FakeCamera();
+        await _pump(tester, api, cam);
+        await _take(tester, cam, _jpeg(1));
+        await tester.tap(_analyse);
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('Counted in the combined health score'),
+          findsNothing,
+        );
+        expect(
+          find.text('Simulated: never used in any health score.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('a real result has no simulated banner', (tester) async {
+      final api = _FakeVision()
+        ..submitResults.add(
+          AiResultOf.ok(_job('completed', result: _result())),
+        );
+      final cam = _FakeCamera();
+      await _pump(tester, api, cam);
+      await _take(tester, cam, _jpeg(1));
+      await tester.tap(_analyse);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('ai-simulated-banner')), findsNothing);
+    });
+
+    testWidgets('the review panel says a simulated decision changes no score', (
+      tester,
+    ) async {
+      final api = _FakeVision(config: _config(simulated: true))
+        ..submitResults.add(
+          AiResultOf.ok(
+            _job(
+              'completed',
+              result: _result(findings: [_safetyFinding], simulated: true),
+              review: {
+                'id': 'KAR-1',
+                'revision': 1,
+                'decision': 'accept',
+                'reviewedScore': 55,
+                'simulated': true,
+                'findings': [],
+              },
+            ),
+          ),
+        );
+      final cam = _FakeCamera();
+      await _pump(tester, api, cam);
+      await _take(tester, cam, _jpeg(1));
+      await tester.tap(_analyse);
+      await tester.pumpAndSettle();
+      await _reveal(tester, find.byKey(const ValueKey('ai-review-saved')));
+      expect(
+        find.text(
+          'Saved. Because this result is simulated, it is not used in any score.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('blended into the appliance health score'),
+        findsNothing,
+      );
+    });
+
+    testWidgets(
+      'parsing: the marker is read from the server and defaults to false',
+      (tester) async {
+        expect(AiResult.fromJson({'simulated': true}).simulated, isTrue);
+        expect(AiResult.fromJson({}).simulated, isFalse);
+        expect(AiResult.fromJson({'simulated': 'true'}).simulated, isFalse);
+        expect(
+          AiConfig.fromJson({'enabled': true, 'simulated': true}).simulated,
+          isTrue,
+        );
+        expect(AiConfig.fromJson({'enabled': true}).simulated, isFalse);
       },
     );
   });

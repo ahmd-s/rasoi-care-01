@@ -16,13 +16,15 @@ Rules enforced here:
   output;
 - the score is recomputed server-side from the confirmed findings with the
   same fixed penalties as the original result;
-- rejected and unreviewed findings never count as confirmed facts.
+- rejected and unreviewed findings never count as confirmed facts;
+- a result from a simulated provider is never eligible for a score.
 """
 import hashlib
 import json
 
 import database
 import vision_guardrails as vg
+import vision_jobs
 
 ACCEPT, EDIT, REJECT = "accept", "edit", "reject"
 DECISIONS = (ACCEPT, EDIT, REJECT)
@@ -139,6 +141,7 @@ def serialise(row):
         "findings": json.loads(row["finding_decisions"] or "[]"),
         "reason": row["reason"],
         "reviewedScore": row["reviewed_score"],
+        "simulated": bool(row["simulated"]),
         "technicianId": row["technician_id"],
         "reviewedAt": row["created_at"],
     }
@@ -172,11 +175,13 @@ def create_review(conn, inspection, technician_id, body, client_request_id):
     review_id = database.new_uuid_id("KAR")
     cur = conn.execute(
         "INSERT INTO kitchen_ai_reviews (id, inspection_id, appliance_id, booking_id, technician_id, revision, "
-        "decision, client_request_id, finding_decisions, reason, reviewed_score, result_sha256, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+        "decision, client_request_id, finding_decisions, reason, reviewed_score, result_sha256, simulated, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
         (review_id, inspection["id"], inspection["appliance_id"], inspection["booking_id"], technician_id,
          revision, decision, client_request_id, json.dumps(findings), reason, score,
-         result_hash(inspection["result_json"]), database.now()))
+         result_hash(inspection["result_json"]),
+         # From the inspection row (server-written), never from the request body.
+         1 if vision_jobs.is_simulated(inspection) else 0, database.now()))
     conn.commit()
     if cur.rowcount != 1:
         raced = find_by_request_id(conn, technician_id, client_request_id)
@@ -200,8 +205,11 @@ def effective_for_health(conn, appliance_id, booking_id):
         (appliance_id, booking_id)).fetchone()
     if not inspection:
         return None
+    # A simulated (test) result is never allowed to affect a score, accepted or not.
+    if vision_jobs.is_simulated(inspection):
+        return None
     review = latest_review(conn, inspection["id"])
-    if not review or review["decision"] not in (ACCEPT, EDIT):
+    if not review or review["decision"] not in (ACCEPT, EDIT) or review["simulated"]:
         return None
     score = review["reviewed_score"]
     if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
