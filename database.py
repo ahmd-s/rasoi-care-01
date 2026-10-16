@@ -1196,8 +1196,10 @@ def migrate_vision_simulated_columns(conn):
     for table in ("kitchen_ai_inspections", "kitchen_ai_reviews"):
         if "simulated" not in _table_columns(conn, table):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN simulated INTEGER NOT NULL DEFAULT 0")
+    # No literal % in SQL: the Postgres wrapper hands every query to psycopg2 with a
+    # params tuple, which would read it as a format character (see tests/test_sql_percent_guard.py).
     conn.execute("UPDATE kitchen_ai_inspections SET simulated = 1 "
-                 "WHERE simulated = 0 AND (provider = 'fake' OR model LIKE 'fake%')")
+                 "WHERE simulated = 0 AND (provider = 'fake' OR substr(model, 1, 4) = 'fake')")
     conn.execute("UPDATE kitchen_ai_reviews SET simulated = 1 WHERE simulated = 0 AND inspection_id IN "
                  "(SELECT id FROM kitchen_ai_inspections WHERE simulated = 1)")
     conn.commit()

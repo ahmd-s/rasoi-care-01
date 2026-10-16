@@ -4,12 +4,20 @@ Goal: run the backend and the Flutter apps on your machine without touching
 production, and without any real AI provider.
 
 ## 1. Backend (local, throwaway database)
+Run it from a **copy** of the backend files, so the git-ignored `rasoicare.db`
+(created next to `database.py`) is a fresh throwaway and not your own dev data:
 ```bash
+mkdir -p /tmp/rasoi-local && cp *.py requirements.txt /tmp/rasoi-local/ && cd /tmp/rasoi-local
 pip install -r requirements.txt
-export JWT_SECRET=local-dev-only
-export RASOI_ALLOW_DEFAULT_STAFF_PIN=1      # local machine only; never on a shared/public host
-python3 app.py                              # http://127.0.0.1:8420, SQLite file rasoicare.db (git-ignored)
+export PORT=8420 JWT_SECRET=local-dev-only
+export STAFF_SEED_OWNER_PIN=$(openssl rand -hex 4) STAFF_SEED_STAFF_PIN=$(openssl rand -hex 4)
+python3 app.py          # note the two PINs from the exports above: the Admin app staff login needs the owner PIN
 ```
+**The dev server listens on all interfaces (0.0.0.0).** Use the random
+`STAFF_SEED_*` PINs above rather than `RASOI_ALLOW_DEFAULT_STAFF_PIN=1`, which
+would put a publicly known staff login on your LAN. On untrusted Wi-Fi keep the
+server for emulator use only (firewall port 8420). If a port is busy, find the
+old server with `lsof -nP -iTCP:8420 -sTCP:LISTEN` and stop that PID.
 Do **not** set `DATABASE_URL`, `OPENAI_API_KEY` or `VISION_AI_ENABLED` locally.
 
 ### Vision AI in test mode (optional)
@@ -44,7 +52,19 @@ still default to production, so shipped apps are unchanged.
 use an `https` staging URL for those. `flutter test` needs no URL: tests run as
 debug builds and are pointed at the placeholder host, never production.
 
-## 3. Sign-in needs Firebase
+## 3. Backend tests against a disposable PostgreSQL
+CI runs SQLite only, so run the suite against Postgres before any Postgres
+deploy. Use a throwaway local server, never a shared or production database:
+```bash
+# any local PostgreSQL 16 you can create a database in, e.g.
+export TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:54329/rasoi_test
+python -m pytest -q          # drops/recreates the schema for every test (slow: ~10+ min)
+```
+`TEST_DATABASE_URL` must point at a database you can lose: each test drops
+all tables in it. `tests/test_sql_percent_guard.py` also catches, on SQLite, the
+one Postgres-only mistake that has already bitten once (a literal `%` in SQL).
+
+## 4. Sign-in needs Firebase
 The backend only accepts Firebase ID tokens (technicians) or its own JWT
 (customers); the apps sign in through Firebase. The committed
 `google-services.json` files belong to the **production** Firebase project
@@ -52,7 +72,7 @@ The backend only accepts Firebase ID tokens (technicians) or its own JWT
 `google-services.json`, set `FIREBASE_PROJECT_ID` on the backend, and enable
 phone/email sign-in. Do not create test accounts in the production project.
 
-## 4. Not covered here
+## 5. Not covered here
 - `rasoi_web_customer`, `rasoi_web_partner`, `rasoi_web_admin` are separate
   web wrappers with their own hard-coded production URL; they are not
   protected by this check.

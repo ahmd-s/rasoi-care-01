@@ -190,8 +190,12 @@ def test_migration_backfills_results_a_fake_provider_already_produced(ctx):
     real = _insert_row(appliance["id"], booking["id"], tech["id"], status="completed", provider="openai",
                        model="gpt-4.1-mini", result_json="{}", simulated=0)
     conn = database.get_db()
-    database.migrate_vision_simulated_columns(conn)
-    database.migrate_vision_simulated_columns(conn)             # idempotent
-    rows = {r["id"]: r["simulated"] for r in conn.execute("SELECT id, simulated FROM kitchen_ai_inspections")}
-    conn.close()
+    try:
+        database.migrate_vision_simulated_columns(conn)
+        database.migrate_vision_simulated_columns(conn)         # idempotent
+        # fetchall(): the Postgres cursor wrapper is not iterable.
+        rows = {r["id"]: r["simulated"]
+                for r in conn.execute("SELECT id, simulated FROM kitchen_ai_inspections").fetchall()}
+    finally:
+        conn.close()
     assert rows[old] == 1 and rows[real] == 0
