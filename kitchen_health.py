@@ -352,3 +352,107 @@ def summarize_kitchen(entries):
         "scoreBasisLabel": BASIS_LABEL,
         "disclaimer": DISCLAIMER,
     }
+
+
+# ----------------------------------------------------------- customer view
+# Service guidance reuses the project's own urgency -> days table
+# (vision_guardrails.ESTIMATED_DAYS: urgent 0, priority 7, soon 21, routine 35).
+# It is a deterministic mapping from the already-computed status, shown as
+# guidance; it is never produced by a model and nothing is invented when there
+# is no status.
+_GUIDANCE = {
+    "critical": ("urgent", 0, "Book a service as soon as possible."),
+    "priority": ("priority", 7, "Book a service within about a week."),
+    "attention": ("soon", 21, "Book a service within about three weeks."),
+    "healthy": ("routine", 35, "No action needed now; plan routine upkeep."),
+}
+
+
+def service_guidance(status, safety_flagged):
+    """{urgency, estimatedDays} for a status, or None without one. The customer
+    app localises the wording by `urgency`.
+    A flagged safety item is treated as at least 'priority'."""
+    if status is None:
+        return None
+    if safety_flagged and status in ("healthy", "attention"):
+        status = "priority"
+    urgency, days, message = _GUIDANCE[status]
+    return {"urgency": urgency, "estimatedDays": days}
+
+
+def visit_history(category, rows, bookings, limit=10):
+    """Past checklist visits for one appliance, newest first. `rows` are the
+    saved checks (booking_id, check_key, result, note, updated_at); `bookings`
+    maps booking_id -> {"service", "status"} for the customer's OWN bookings
+    (a visit whose booking isn't in the map is skipped). Scores here are the
+    technician-only score for that visit; no notes, ids or AI data."""
+    by_visit = {}
+    for r in rows:
+        by_visit.setdefault(r["booking_id"], []).append(r)
+    out = []
+    for booking_id, items in by_visit.items():
+        booking = bookings.get(booking_id)
+        if booking is None:
+            continue
+        saved = {i["check_key"]: {"result": i["result"], "note": i["note"]} for i in items}
+        a = assess_appliance(category, saved)
+        out.append({
+            "date": max(i["updated_at"] for i in items),
+            "serviceName": booking["service"],
+            "bookingStatus": booking["status"],
+            "score": a["technicianScore"],
+            "status": a["status"],
+            "safetyFlagged": a["safetyFlagged"],
+            "_booking": booking_id,
+        })
+    out.sort(key=lambda v: (v["date"], v["_booking"]), reverse=True)
+    for v in out:
+        del v["_booking"]
+    return out[:limit]
+
+
+def customer_overview(entries, history_by_appliance):
+    """The customer-facing Passport. Reuses summarize_kitchen / the entries'
+    assessments unchanged, then trims to what a customer needs: no technician
+    notes, no booking ids, no AI internals (only whether an accepted photo
+    review is included in an appliance's score)."""
+    kitchen = summarize_kitchen(entries)
+    appliances = []
+    for e in entries:
+        a = e["assessment"]
+        combined = a.get("combinedScore")
+        score = combined if combined is not None else a["technicianScore"]
+        photo = combined is not None
+        guidance = service_guidance(a["status"], a["safetyFlagged"])
+        appliances.append({
+            "id": e["id"], "category": e["category"], "brand": e["brand"], "model": e["model"],
+            "score": score, "status": a["status"],
+            "checksTested": a["coverage"]["tested"], "checksTotal": a["coverage"]["total"],
+            "notEnoughChecks": a["technicianScore"] is None,
+            "safetyFlagged": a["safetyFlagged"],
+            "attentionItems": [i["label"] for i in a["flaggedItems"]],
+            "basis": "technician_plus_photo_review" if photo else "technician_only",
+            "assessedAt": e["assessedAt"],
+            "nextService": guidance,
+            "history": history_by_appliance.get(e["id"], []),
+        })
+    ranked = [(x["nextService"]["estimatedDays"], i) for i, x in enumerate(appliances) if x["nextService"]]
+    next_service = None
+    if ranked:
+        days, idx = min(ranked)
+        top = appliances[idx]
+        next_service = {**top["nextService"], "applianceId": top["id"], "category": top["category"]}
+    needs = [x["id"] for x in sorted(
+        (x for x in appliances if x["safetyFlagged"] or x["status"] in ("attention", "priority", "critical")),
+        key=lambda x: (_RANK.get(x["status"], 4) if x["status"] else 4, x["id"]))]
+    return {
+        "kitchen": {
+            "score": kitchen["technicianScore"], "status": kitchen["status"],
+            "registeredCount": kitchen["registeredCount"], "assessedCount": kitchen["assessedCount"],
+            "safetyFlagged": kitchen["safetyFlagged"],
+            "basis": "technician_only",
+            "nextService": next_service,
+        },
+        "appliances": appliances,
+        "needsAttention": needs,
+    }

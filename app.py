@@ -4528,6 +4528,37 @@ def get_booking_kitchen_health(booking_id):
     return jsonify(summary)
 
 
+@app.route("/api/kitchen-passport/overview", methods=["GET"])
+@require_auth
+def get_my_kitchen_passport_overview():
+    """The signed-in customer's own Passport: scores, service guidance and
+    visit history. Everything is scoped to request.user; technician notes,
+    booking ids and AI internals are not included."""
+    user_id = request.user["id"]
+    conn = get_db()
+    try:
+        entries = _kitchen_health_entries(conn, user_id)
+        history = {}
+        if entries:
+            marks = ",".join("?" * len(entries))
+            rows = conn.execute(
+                "SELECT appliance_id, booking_id, check_key, result, note, updated_at "
+                f"FROM kitchen_inspection_checks WHERE appliance_id IN ({marks})",
+                [e["id"] for e in entries]).fetchall()
+            # Only this customer's own bookings can appear in their history.
+            bookings = {b["id"]: {"service": b["service"], "status": b["status"]} for b in conn.execute(
+                "SELECT id, service, status FROM bookings WHERE user_id = ?", (user_id,)).fetchall()}
+            by_appliance = {}
+            for r in rows:
+                by_appliance.setdefault(r["appliance_id"], []).append(dict(r))
+            for e in entries:
+                history[e["id"]] = kitchen_health.visit_history(
+                    e["category"], by_appliance.get(e["id"], []), bookings)
+        return jsonify(kitchen_health.customer_overview(entries, history))
+    finally:
+        conn.close()
+
+
 @app.route("/api/kitchen-passport/health", methods=["GET"])
 @require_auth
 def get_my_kitchen_health():

@@ -446,6 +446,8 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
             CareCard(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(children: [
+                _NavRow(icon: Icons.kitchen_outlined, label: t.accountKitchenPassport,
+                    onTap: () => context.push('/passport')),
                 _NavRow(icon: Icons.event_note, label: t.accountBookingsHistory,
                     onTap: () => context.go('/bookings')),
                 _NavRow(icon: Icons.account_balance_wallet_outlined,

@@ -16,6 +16,7 @@ import '../features/booking/address_picker_screen.dart';
 import '../features/tracking/tracking_screen.dart';
 import '../features/invoice/invoice_rate_screens.dart';
 import '../features/account/account_screens.dart';
+import '../features/passport/kitchen_passport_screen.dart';
 import '../features/shop/shop_screen.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
@@ -143,6 +144,11 @@ final router = GoRouter(
         path: '/shop',
         parentNavigatorKey: _rootKey,
         builder: (_, __) => const ShopScreen()),
+
+    GoRoute(
+        path: '/passport',
+        parentNavigatorKey: _rootKey,
+        builder: (_, __) => const KitchenPassportScreen()),
 
     // The four-tab customer shell.
     StatefulShellRoute.indexedStack(
