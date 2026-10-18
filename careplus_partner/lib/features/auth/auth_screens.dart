@@ -27,6 +27,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         if (mounted) context.go('/login');
         return;
       }
+      final staffRole = await refreshStaffRole(ref);
+      if (!mounted) return;
+      if (staffRole != null) {
+        context.go('/ops/overview');
+        return;
+      }
       // Already signed in from a previous session — find out where they
       // actually belong (still applying, awaiting verification, or fully
       // onboarded) instead of always dropping them at the job feed.
@@ -120,9 +126,21 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    final ok = await ref.read(authFlowProvider.notifier).signInWithGoogle();
+    if (!mounted) return;
+    if (ok) {
+      context.go('/ops/overview');
+      return;
+    }
+    final error = ref.read(authFlowProvider).error ?? context.l10n.googleStaffSignInError;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final sending = ref.watch(authFlowProvider.select((s) => s.sending));
+    final submitting = ref.watch(authFlowProvider.select((s) => s.submitting));
     final t = context.l10n;
     return Scaffold(
       body: SafeArea(
@@ -170,6 +188,18 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : Text(_creatingAccount ? t.phoneButtonCreate : t.phoneButtonSend),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: submitting ? null : _signInWithGoogle,
+                  icon: submitting
+                      ? const SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.account_circle_outlined),
+                  label: Text(t.googleStaffSignIn),
                 ),
               ),
               const SizedBox(height: 18),

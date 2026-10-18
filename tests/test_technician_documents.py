@@ -1,7 +1,7 @@
 import database
 from conftest import add_technician, auth_headers
 
-OWNER_PHONE = "9822000001"
+OWNER_PHONE = "9822000002"
 OWNER_PIN = "1234"
 
 

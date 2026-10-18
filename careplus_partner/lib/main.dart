@@ -71,6 +71,15 @@ class _RasoiCarePartnerAppState extends ConsumerState<RasoiCarePartnerApp>
 
   Future<void> _maybeRelock() async {
     if (!ref.read(authServiceProvider).isSignedIn) return;
+    final staffRole = await refreshStaffRole(ref);
+    if (staffRole != null) {
+      if (await ref.read(biometricServiceProvider).isEnabled()) {
+        router.go('/lock');
+      } else {
+        router.go('/ops/overview');
+      }
+      return;
+    }
     final tech = await fetchTechnicianMe();
     final stage = stageFromTechnicianJson(tech);
     // Same gate as SplashScreen's cold-start check — only a fully

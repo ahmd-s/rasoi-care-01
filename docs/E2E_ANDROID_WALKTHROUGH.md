@@ -1,7 +1,9 @@
-# Android emulator walkthrough (staging, simulated AI)
+# Android emulator walkthrough (local development)
 
-Everything here runs against a **local** backend and a **separate staging
-Firebase project**. Do not do it against production. See `docs/LOCAL_SETUP.md`.
+This older walkthrough is for local development only. The client-testing setup
+is exactly two apps (Customer + Partner), real Vision AI stays disabled, and
+owner access is allowlist-only. Use `docs/CLIENT_STAGING_RUNBOOK.md` for that
+setup. Never run these local steps against production.
 
 ## What was and was not verified (as of this document)
 Verified on an Android 16 arm64 emulator, unauthenticated only: the Partner app
@@ -12,24 +14,19 @@ reach the host backend at `10.0.2.2:8420`.
 **Not verified:** every step below that needs sign-in. Sign-in needs Firebase,
 and the only Firebase project configured in the repo is production.
 
-## Prerequisites (your action)
-1. **Staging Firebase project** (new, not `rasoi-care`): enable the sign-in
-   methods the apps use (phone and/or email), download its
-   `google-services.json` into `careplus_flutter/android/app/` and
-   `careplus_partner/android/app/` (do **not** commit them), and regenerate
-   `lib/firebase_options.dart` with `flutterfire configure` against it.
-   Phone sign-in: add Firebase **test phone numbers** (with fixed codes) so no real
-   SMS is sent.
-2. Start the backend with `FIREBASE_PROJECT_ID=<staging project id>` plus the
-   env in `docs/LOCAL_SETUP.md`, **and** the test-mode AI flags:
-   `RASOI_ALLOW_FAKE_VISION=1 VISION_AI_PROVIDER=fake`.
+## Prerequisites (local development only)
+1. Use a separate Firebase project, never `rasoi-care`; configure the
+   development app registrations and test phone numbers there.
+2. Start the backend with `FIREBASE_PROJECT_ID=<local test project id>` plus
+   the local-only environment in `docs/LOCAL_SETUP.md`. The optional fake
+   Vision AI flow described there is not part of client testing.
 3. Emulator (headless is fine):
    `~/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.1`
    (list AVDs with `emulator -list-avds`); wait for
    `~/Library/Android/sdk/platform-tools/adb shell getprop sys.boot_completed` = 1.
-4. Build and run each app with an explicit URL:
+4. Build and run the local Customer and Partner apps with an explicit URL:
    `flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:8420`
-   in `careplus_flutter` (customer), `careplus_partner` and `careplus_admin`.
+   in `careplus_flutter` (customer) and `careplus_partner`.
 
 ## Walkthrough
 Use two emulator profiles or sign out between roles. "Expect" = what should

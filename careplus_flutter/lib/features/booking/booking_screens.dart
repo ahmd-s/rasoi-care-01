@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -105,14 +106,17 @@ class _IssueRow extends StatelessWidget {
         borderColor: issue.selected ? context.scheme.primary : null,
         child: Row(children: [
           Icon(issue.selected ? Icons.check_box : Icons.check_box_outline_blank,
-              color: issue.selected ? context.scheme.primary : context.care.hairline),
+              color: issue.selected
+                  ? context.scheme.primary
+                  : context.care.hairline),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(issue.label,
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                    style: const TextStyle(
+                        fontSize: 13.5, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 2),
                 Text(issue.hint, style: context.type.bodySmall),
               ],
@@ -163,8 +167,10 @@ class _PhotoPickerState extends State<_PhotoPicker> {
       ),
     );
     if (source == null) return;
-    final picked = await ImagePicker().pickImage(source: source, imageQuality: 80);
-    if (picked != null && mounted) setState(() => _photos.add(File(picked.path)));
+    final picked =
+        await ImagePicker().pickImage(source: source, imageQuality: 80);
+    if (picked != null && mounted)
+      setState(() => _photos.add(File(picked.path)));
   }
 
   void _remove(int i) => setState(() => _photos.removeAt(i));
@@ -200,7 +206,9 @@ class _EmptyPhotoTile extends StatelessWidget {
               border: Border.all(color: context.care.hairline),
             ),
             child: Icon(
-              onTap != null ? Icons.add_a_photo_outlined : Icons.camera_alt_outlined,
+              onTap != null
+                  ? Icons.add_a_photo_outlined
+                  : Icons.camera_alt_outlined,
               size: 18,
               color: context.care.inkFaint,
             ),
@@ -231,7 +239,8 @@ class _FilledPhotoTile extends StatelessWidget {
                     padding: const EdgeInsets.all(2),
                     decoration: const BoxDecoration(
                         color: Colors.black54, shape: BoxShape.circle),
-                    child: const Icon(Icons.close, size: 13, color: Colors.white),
+                    child:
+                        const Icon(Icons.close, size: 13, color: Colors.white),
                   ),
                 ),
               ),
@@ -253,7 +262,9 @@ class SlotScreen extends ConsumerWidget {
     return [
       for (var i = 0; i < 6; i++)
         (
-          i == 0 ? todayLabel : DateFormat('E').format(now.add(Duration(days: i))),
+          i == 0
+              ? todayLabel
+              : DateFormat('E').format(now.add(Duration(days: i))),
           DateFormat('d MMM').format(now.add(Duration(days: i))),
           DateTime(now.year, now.month, now.day).add(Duration(days: i)),
         ),
@@ -263,7 +274,12 @@ class SlotScreen extends ConsumerWidget {
   // Business hours 10 am–7 pm, 90-minute slots — was 8 am–8 pm in 1–2 hour
   // blocks that didn't match the actual service window.
   static const _am = ['10:00 – 11:30 am', '11:30 am – 1:00 pm'];
-  static const _pm = ['1:00 – 2:30 pm', '2:30 – 4:00 pm', '4:00 – 5:30 pm', '5:30 – 7:00 pm'];
+  static const _pm = [
+    '1:00 – 2:30 pm',
+    '2:30 – 4:00 pm',
+    '4:00 – 5:30 pm',
+    '5:30 – 7:00 pm'
+  ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -281,12 +297,14 @@ class SlotScreen extends ConsumerWidget {
             children: [
               Eyebrow(t.slotSelectedEyebrow),
               Text('${draft.day} · ${draft.slot}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700)),
             ],
           ),
         ),
         FilledButton(
-            onPressed: () => context.push('/book/address'), child: Text(t.slotNext)),
+            onPressed: () => context.push('/book/address'),
+            child: Text(t.slotNext)),
       ]),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -301,14 +319,18 @@ class SlotScreen extends ConsumerWidget {
                 final label = '${days[i].$1} ${days[i].$2}';
                 final sel = draft.day == label;
                 return Pressable(
-                  onTap: () => vm.setSlot(label, draft.slot, dayDate: days[i].$3),
+                  onTap: () =>
+                      vm.setSlot(label, draft.slot, dayDate: days[i].$3),
                   child: Container(
                     width: 66,
                     decoration: BoxDecoration(
-                      color: sel ? context.scheme.primary : context.scheme.surface,
+                      color:
+                          sel ? context.scheme.primary : context.scheme.surface,
                       borderRadius: Radii.rMd,
                       border: Border.all(
-                          color: sel ? context.scheme.primary : context.care.hairline),
+                          color: sel
+                              ? context.scheme.primary
+                              : context.care.hairline),
                     ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -317,12 +339,15 @@ class SlotScreen extends ConsumerWidget {
                             style: TextStyle(
                                 fontSize: 11,
                                 color: sel
-                                    ? context.scheme.onPrimary.withValues(alpha: 0.8)
+                                    ? context.scheme.onPrimary
+                                        .withValues(alpha: 0.8)
                                     : context.care.inkMuted)),
                         const SizedBox(height: 3),
                         Text(days[i].$2.split(' ').first,
                             style: CareType.mono(
-                                sel ? context.scheme.onPrimary : context.scheme.onSurface,
+                                sel
+                                    ? context.scheme.onPrimary
+                                    : context.scheme.onSurface,
                                 size: 15,
                                 w: FontWeight.w600)),
                       ],
@@ -341,7 +366,8 @@ class SlotScreen extends ConsumerWidget {
     );
   }
 
-  Widget _slotGrid(BuildContext context, WidgetRef ref, BookingDraft draft, List<String> slots) {
+  Widget _slotGrid(BuildContext context, WidgetRef ref, BookingDraft draft,
+      List<String> slots) {
     final vm = ref.read(bookingDraftProvider.notifier);
     return GridView.count(
       crossAxisCount: 2,
@@ -358,10 +384,14 @@ class SlotScreen extends ConsumerWidget {
               alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(horizontal: 6),
               decoration: BoxDecoration(
-                color: draft.slot == s ? context.scheme.primary : context.scheme.surface,
+                color: draft.slot == s
+                    ? context.scheme.primary
+                    : context.scheme.surface,
                 borderRadius: Radii.rMd,
                 border: Border.all(
-                    color: draft.slot == s ? context.scheme.primary : context.care.hairline),
+                    color: draft.slot == s
+                        ? context.scheme.primary
+                        : context.care.hairline),
               ),
               child: Text(s,
                   textAlign: TextAlign.center,
@@ -396,9 +426,11 @@ class AddressScreen extends ConsumerWidget {
     return draft.pickedAddress;
   }
 
-  Future<void> _selectAddress(BuildContext context, BookingDraftVM vm, String? currentId) async {
+  Future<void> _selectAddress(
+      BuildContext context, BookingDraftVM vm, String? currentId) async {
     final picked = await Navigator.of(context).push<SavedAddress>(
-      MaterialPageRoute(builder: (_) => SelectLocationScreen(currentId: currentId)),
+      MaterialPageRoute(
+          builder: (_) => SelectLocationScreen(currentId: currentId)),
     );
     if (picked != null) vm.setPickedAddress(picked);
   }
@@ -415,7 +447,8 @@ class AddressScreen extends ConsumerWidget {
       dock: SizedBox(
         width: double.infinity,
         child: FilledButton(
-            onPressed: current == null ? null : () => context.push('/book/payment'),
+            onPressed:
+                current == null ? null : () => context.push('/book/payment'),
             child: Text(t.addressReviewAndPay)),
       ),
       body: Column(
@@ -425,11 +458,13 @@ class AddressScreen extends ConsumerWidget {
             CareCard(
               onTap: () => _selectAddress(context, vm, draft.addressId),
               child: Row(children: [
-                Icon(Icons.add_location_alt_outlined, color: context.scheme.primary),
+                Icon(Icons.add_location_alt_outlined,
+                    color: context.scheme.primary),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(t.addressSelectLocation,
-                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                      style: const TextStyle(
+                          fontSize: 13.5, fontWeight: FontWeight.w700)),
                 ),
                 const Icon(Icons.chevron_right),
               ]),
@@ -445,14 +480,16 @@ class AddressScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(current.label,
-                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                          style: const TextStyle(
+                              fontSize: 13.5, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 3),
                       Text(current.line, style: context.type.bodySmall),
                     ],
                   ),
                 ),
                 Text(t.addressChange,
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                    style: const TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w700)),
               ]),
             ),
           const SizedBox(height: 16),
@@ -478,7 +515,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   /// Places both halves of a possibly-mixed cart — real bookings for
   /// [draft.services] and, if [shopCart] isn't empty, one real Shop order
-  /// for it too — from this single "Pay" tap, so a kit and a repair visit
+  /// for it too — from this single booking confirmation tap, so a kit and a repair visit
   /// genuinely end up on the same bill instead of needing two separate
   /// checkouts (see shopCartProvider's doc-comment in providers.dart for
   /// why the cart itself lives at app scope). The two go through different
@@ -486,110 +523,140 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// lifecycle; a Shop order doesn't), so this can partially succeed —
   /// handled honestly below rather than claiming a single "you're all set"
   /// when only one half actually went through.
-  Future<void> _pay(BookingDraft draft, PricingBreakdown pricing, Map<String, int> shopCart) async {
+  // Reused across retries of the same checkout so a timeout-then-retry or a
+  // double tap can never create a second booking; cleared on success.
+  String? _idemKey;
+  static String _newIdemKey() =>
+      'co-${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 30)}';
+
+  Future<void> _pay(BookingDraft draft, PricingBreakdown pricing,
+      Map<String, int> shopCart) async {
+    if (_submitting) return;
+    if (draft.services.isEmpty && shopCart.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.paymentEmptyCart)),
+      );
+      return;
+    }
     setState(() => _submitting = true);
-    SavedAddress? selected;
-    for (final a in [
-      ...ref.read(savedAddressesProvider),
-      if (draft.pickedAddress != null) draft.pickedAddress!,
-    ]) {
-      if (a.id == draft.addressId) {
-        selected = a;
-        break;
+    try {
+      SavedAddress? selected;
+      for (final a in [
+        ...ref.read(savedAddressesProvider),
+        if (draft.pickedAddress != null) draft.pickedAddress!,
+      ]) {
+        if (a.id == draft.addressId) {
+          selected = a;
+          break;
+        }
       }
-    }
-    // One real booking per selected service — each keeps its own real
-    // allocated price and gets routed/tracked independently on the
-    // Partner side. Awaited (not fire-and-forget) because the
-    // confirmation screen needs the real booking id(s) that come back —
-    // it used to always link to the same hardcoded "CP-2481-NSK" no
-    // matter what was actually created, which is exactly why "the actual
-    // booking" never showed up.
-    final directions = draft.directions.trim();
-    final notes = draft.notes.trim();
-    // What the customer actually ticked on the Issue screen — previously
-    // collected in this exact draft and then never sent anywhere, so a
-    // technician's job screen had nothing real to show and fell back to a
-    // canned, identical symptom list for every booking.
-    final selectedIssues = [
-      for (final issue in draft.issues)
-        if (issue.selected) issue.label,
-    ];
-    var created = <Booking>[];
-    String? bookingError;
-    if (draft.services.isNotEmpty) {
-      final result = await ref.read(apiRepositoryProvider).createBookingCart(
-            services: draft.services,
-            useCoins: draft.useCoins,
-            areaLabel: selected?.label,
-            addressLine: selected?.line,
-            lat: selected?.lat,
-            lng: selected?.lng,
-            directions: directions.isEmpty ? null : directions,
-            notes: notes.isEmpty ? null : notes,
-            issues: selectedIssues,
-            scheduledAt: draft.scheduledAt,
-          );
-      if (result.bookings != null) created = result.bookings!;
-      bookingError = result.error;
-    }
-    int? shopOrderTotal;
-    String? shopError;
-    if (shopCart.isNotEmpty) {
-      final result = await ref.read(apiRepositoryProvider).placeShopOrder(shopCart);
-      shopOrderTotal = result.totalPaise;
-      shopError = result.error;
-    }
-    if (!mounted) return;
-    setState(() => _submitting = false);
+      // One real booking per selected service — each keeps its own real
+      // allocated price and gets routed/tracked independently on the
+      // Partner side. Awaited (not fire-and-forget) because the
+      // confirmation screen needs the real booking id(s) that come back —
+      // it used to always link to the same hardcoded "CP-2481-NSK" no
+      // matter what was actually created, which is exactly why "the actual
+      // booking" never showed up.
+      final directions = draft.directions.trim();
+      final notes = draft.notes.trim();
+      // What the customer actually ticked on the Issue screen — previously
+      // collected in this exact draft and then never sent anywhere, so a
+      // technician's job screen had nothing real to show and fell back to a
+      // canned, identical symptom list for every booking.
+      final selectedIssues = [
+        for (final issue in draft.issues)
+          if (issue.selected) issue.label,
+      ];
+      var created = <Booking>[];
+      String? bookingError;
+      if (draft.services.isNotEmpty) {
+        final result = await ref.read(apiRepositoryProvider).createBookingCart(
+              services: draft.services,
+              useCoins: draft.useCoins,
+              areaLabel: selected?.label,
+              addressLine: selected?.line,
+              lat: selected?.lat,
+              lng: selected?.lng,
+              directions: directions.isEmpty ? null : directions,
+              notes: notes.isEmpty ? null : notes,
+              issues: selectedIssues,
+              scheduledAt: draft.scheduledAt,
+              idempotencyKey: _idemKey ??= _newIdemKey(),
+            );
+        if (result.bookings != null) {
+          created = result.bookings!;
+          _idemKey = null; // next checkout is a new order
+        }
+        bookingError = result.error;
+      }
+      int? shopOrderTotal;
+      String? shopError;
+      if (shopCart.isNotEmpty) {
+        final result =
+            await ref.read(apiRepositoryProvider).placeShopOrder(shopCart);
+        shopOrderTotal = result.totalPaise;
+        shopError = result.error;
+      }
+      if (!mounted) return;
+      setState(() => _submitting = false);
 
-    final bookingsWanted = draft.services.isNotEmpty;
-    final bookingsOk = !bookingsWanted || created.isNotEmpty;
-    final shopWanted = shopCart.isNotEmpty;
-    final shopOk = !shopWanted || shopOrderTotal != null;
+      final bookingsWanted = draft.services.isNotEmpty;
+      final bookingsOk = !bookingsWanted || created.isNotEmpty;
+      final shopWanted = shopCart.isNotEmpty;
+      final shopOk = !shopWanted || shopOrderTotal != null;
 
-    final t = context.l10n;
-    if (!bookingsOk && !shopOk) {
-      // Honest failure — no fake "you're booked" when nothing was actually
-      // created. Show the real reason (e.g. the backend has no technician
-      // to route to yet) rather than always blaming the customer's
-      // connection, which is wrong for anything but a genuine network
-      // failure and actively misleading for a real server-side rejection.
+      final t = context.l10n;
+      final failures = <String>[
+        if (bookingsWanted && !bookingsOk)
+          bookingError ?? t.paymentBookingFailedHint,
+        if (shopWanted && !shopOk) shopError ?? t.paymentShopRetryHint,
+      ];
+      final anyOrderSucceeded =
+          (bookingsWanted && bookingsOk) || (shopWanted && shopOk);
+      if (failures.isNotEmpty && !anyOrderSucceeded) {
+        // A booking-only checkout has no Shop total. Report failed requests
+        // before the Shop-success path below, which requires that total.
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failures.join('\n'))));
+        return;
+      }
+      if (shopOk && shopWanted) ref.read(shopCartProvider.notifier).clear();
+
+      if (created.isNotEmpty) {
+        if (shopWanted && !shopOk) {
+          // Partial success: say exactly what didn't go through rather than
+          // staying silent about the half that failed.
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(t.paymentPartialShopFailed(
+                  shopError ?? t.paymentShopRetryHint))));
+        }
+        context.go('/booking/${created.first.id}/confirmed',
+            extra: created.length);
+        return;
+      }
+      // Nothing booked (either no services were selected, or booking creation
+      // failed) but the Shop order went through on its own.
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(bookingError ?? shopError ?? t.paymentOrderError)));
-      return;
+          content: Text(bookingsWanted && !bookingsOk
+              ? t.paymentShopPlacedBookingFailed(Money.rupees(shopOrderTotal!),
+                  bookingError ?? t.paymentBookingFailedHint)
+              : t.paymentShopOrderPlaced(Money.rupees(shopOrderTotal!)))));
+      context.go('/');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.paymentOrderError)),
+      );
     }
-    if (shopOk && shopWanted) ref.read(shopCartProvider.notifier).clear();
-
-    if (created.isNotEmpty) {
-      if (shopWanted && !shopOk) {
-        // Partial success: say exactly what didn't go through rather than
-        // staying silent about the half that failed.
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(t.paymentPartialShopFailed(
-                shopError ?? t.paymentShopRetryHint))));
-      }
-      context.go('/booking/${created.first.id}/confirmed', extra: created.length);
-      return;
-    }
-    // Nothing booked (either no services were selected, or booking creation
-    // failed) but the Shop order went through on its own.
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(bookingsWanted && !bookingsOk
-            ? t.paymentShopPlacedBookingFailed(
-                Money.rupees(shopOrderTotal!), bookingError ?? t.paymentBookingFailedHint)
-            : t.paymentShopOrderPlaced(Money.rupees(shopOrderTotal!)))));
-    context.go('/');
   }
 
   @override
   Widget build(BuildContext context) {
     final draft = ref.watch(bookingDraftProvider);
     final vm = ref.read(bookingDraftProvider.notifier);
-    final repo = ref.watch(repositoryProvider);
     final pricing = ref.watch(pricingProvider);
     final coinsBalance = ref.watch(apiRepositoryProvider).coinsBalance;
-    final paymentMethodsList = repo.paymentMethods();
     // A Shop cart added from ShopScreen rides along here rather than
     // needing its own separate checkout — see shopCartProvider's
     // doc-comment. Kit MRPs are the final, all-inclusive price (no visit
@@ -597,7 +664,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     // just add straight onto the combined total below.
     final shopCart = ref.watch(shopCartProvider);
     final shopLines = [
-      for (final e in shopCart.entries) (shopProducts.firstWhere((p) => p.id == e.key), e.value),
+      for (final e in shopCart.entries)
+        (shopProducts.firstWhere((p) => p.id == e.key), e.value),
     ];
     final shopTotalPaise =
         shopLines.fold(0, (sum, l) => sum + l.$1.mrpPaise * l.$2);
@@ -611,7 +679,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Eyebrow(t.paymentPayableNow),
+              Eyebrow(t.paymentDueAfterVisit),
               Text(Money.rupees(grandTotalPaise),
                   style: CareType.mono(context.scheme.onSurface,
                       size: 17, w: FontWeight.w600)),
@@ -619,14 +687,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         ),
         FilledButton(
-          onPressed: (draft.services.isEmpty && shopCart.isEmpty) || _submitting
-              ? null
-              : () => _pay(draft, pricing, shopCart),
+          onPressed: _submitting ? null : () => _pay(draft, pricing, shopCart),
           child: _submitting
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
               : Text(t.paymentPayButton(Money.rupees(grandTotalPaise))),
         ),
       ]),
@@ -643,10 +710,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     children: [
                       Expanded(
                         child: Text(s.title,
-                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                            style: const TextStyle(
+                                fontSize: 13.5, fontWeight: FontWeight.w700)),
                       ),
                       Text(Money.rupees(s.pricePaise),
-                          style: CareType.mono(context.scheme.onSurface, size: 12)),
+                          style: CareType.mono(context.scheme.onSurface,
+                              size: 12)),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -657,24 +726,29 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     children: [
                       Expanded(
                         child: Text('${productName(product.id, t)} × $qty',
-                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                            style: const TextStyle(
+                                fontSize: 13.5, fontWeight: FontWeight.w700)),
                       ),
                       Text(Money.rupees(product.mrpPaise * qty),
-                          style: CareType.mono(context.scheme.onSurface, size: 12)),
+                          style: CareType.mono(context.scheme.onSurface,
+                              size: 12)),
                     ],
                   ),
                   const SizedBox(height: 4),
                 ],
                 if (draft.services.isNotEmpty)
-                  Text('${draft.day} · ${draft.slot}', style: context.type.bodySmall),
+                  Text('${draft.day} · ${draft.slot}',
+                      style: context.type.bodySmall),
                 if (draft.services.isNotEmpty) ...[
                   const Divider(height: 24),
-                  _priceLine(context, t.paymentVisitFee, Money.rupees(pricing.visitFeePaise)),
+                  _priceLine(context, t.paymentVisitFee,
+                      Money.rupees(pricing.visitFeePaise)),
                   if (pricing.couponDiscountPaise > 0)
                     _priceLine(context, t.paymentCouponApplied,
                         '-${Money.rupees(pricing.couponDiscountPaise)}',
                         color: context.care.success),
-                  _priceLine(context, t.paymentGst, Money.rupees(pricing.gstPaise)),
+                  _priceLine(
+                      context, t.paymentGst, Money.rupees(pricing.gstPaise)),
                   if (pricing.coinsRedeemed > 0)
                     _priceLine(context, t.paymentCoinsUsed,
                         '-${Money.rupees(pricing.coinsRedeemed * 100)}',
@@ -685,7 +759,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(t.paymentTotal,
-                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
+                        style: const TextStyle(
+                            fontSize: 14.5, fontWeight: FontWeight.w700)),
                     Text(Money.rupees(grandTotalPaise),
                         style: CareType.mono(context.scheme.onSurface,
                             size: 18, w: FontWeight.w600)),
@@ -714,79 +789,56 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(t.paymentUseCoins,
-                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-                      Text(t.paymentCoinsAvailable('$coinsBalance'), style: context.type.bodySmall),
-                    ],
-                  ),
-                ),
-                Switch(value: draft.useCoins, onChanged: (_) => vm.toggleUseCoins()),
-              ]),
-            ),
-          ],
-          // No card/UPI/wallet payment gateway is actually wired up (no
-          // Razorpay or any other processor exists in this app or the
-          // backend) — every option below is a display choice only, never
-          // read by booking creation. Real payment collection is UPI to
-          // the technician after the visit regardless of what's selected
-          // here. Grouped into sections (Pay on delivery / UPI apps /
-          // Cards / More options) to match how every major delivery app
-          // lays this screen out, but deliberately not restoring the old
-          // "Payments run through Razorpay" line or a fake saved card/
-          // wallet balance — those asserted something false rather than
-          // just being an unbuilt feature.
-          for (var i = 0; i < paymentMethodsList.length; i++) ...[
-            if (i == 0 || paymentMethodsList[i].section != paymentMethodsList[i - 1].section)
-              SectionHeader(paymentMethodsList[i].section),
-            CareCard(
-              onTap: () => vm.setPayment(paymentMethodsList[i].id),
-              borderColor:
-                  draft.paymentId == paymentMethodsList[i].id ? context.scheme.primary : null,
-              child: Row(children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                      color: context.scheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Text(paymentMethodsList[i].glyph, style: const TextStyle(fontSize: 14)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(paymentMethodsList[i].name,
                           style: const TextStyle(
                               fontSize: 13.5, fontWeight: FontWeight.w700)),
-                      Text(paymentMethodsList[i].detail, style: context.type.bodySmall),
+                      Text(t.paymentCoinsAvailable('$coinsBalance'),
+                          style: context.type.bodySmall),
                     ],
                   ),
                 ),
-                Icon(
-                    draft.paymentId == paymentMethodsList[i].id
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    color: draft.paymentId == paymentMethodsList[i].id
-                        ? context.scheme.primary
-                        : context.care.hairline),
+                Switch(
+                    value: draft.useCoins,
+                    onChanged: (_) => vm.toggleUseCoins()),
               ]),
             ),
-            const SizedBox(height: 10),
           ],
+          SectionHeader(t.paymentAfterVisitSection),
+          CareCard(
+            borderColor: context.scheme.primary,
+            child: Row(children: [
+              Icon(Icons.payments_outlined, color: context.scheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(t.paymentAfterVisitTitle,
+                        style: const TextStyle(
+                            fontSize: 13.5, fontWeight: FontWeight.w700)),
+                    Text(t.paymentAfterVisitDetail,
+                        style: context.type.bodySmall),
+                  ],
+                ),
+              ),
+              Icon(Icons.check_circle, color: context.scheme.primary),
+            ]),
+          ),
         ],
       ),
     );
   }
 
-  Widget _priceLine(BuildContext context, String label, String value, {Color? color}) =>
+  Widget _priceLine(BuildContext context, String label, String value,
+          {Color? color}) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(label, style: context.type.bodySmall),
-            Text(value, style: CareType.mono(color ?? context.scheme.onSurface, size: 12)),
+            Text(value,
+                style:
+                    CareType.mono(color ?? context.scheme.onSurface, size: 12)),
           ],
         ),
       );
@@ -800,7 +852,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 // created; no technician identity is shown at all until one is genuinely
 // assigned, since the Customer app has no real way to know who that is yet.
 class ConfirmedScreen extends ConsumerWidget {
-  const ConfirmedScreen({super.key, required this.bookingId, this.totalBooked = 1});
+  const ConfirmedScreen(
+      {super.key, required this.bookingId, this.totalBooked = 1});
   final String bookingId;
   final int totalBooked;
   @override
@@ -829,15 +882,19 @@ class ConfirmedScreen extends ConsumerWidget {
                           value: 1,
                           size: 94,
                           color: context.care.success,
-                          child: Icon(Icons.check, size: 40, color: context.care.success),
+                          child: Icon(Icons.check,
+                              size: 40, color: context.care.success),
                         ),
                         const SizedBox(height: 22),
-                        Text(t.confirmedTitle, style: context.type.headlineMedium),
+                        Text(t.confirmedTitle,
+                            style: context.type.headlineMedium),
                         const SizedBox(height: 10),
                         Text(summary,
-                            textAlign: TextAlign.center, style: context.type.bodyMedium),
+                            textAlign: TextAlign.center,
+                            style: context.type.bodyMedium),
                         const SizedBox(height: 14),
-                        Mono('JOB $bookingId', color: context.scheme.secondary, size: 13),
+                        Mono('JOB $bookingId',
+                            color: context.scheme.secondary, size: 13),
                       ],
                     ),
                   ),
@@ -848,12 +905,14 @@ class ConfirmedScreen extends ConsumerWidget {
               child: Row(children: [
                 Expanded(
                   child: OutlinedButton(
-                      onPressed: () => context.go('/'), child: Text(t.confirmedHome)),
+                      onPressed: () => context.go('/'),
+                      child: Text(t.confirmedHome)),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: FilledButton(
-                      onPressed: () => context.push('/booking/$bookingId/track'),
+                      onPressed: () =>
+                          context.push('/booking/$bookingId/track'),
                       child: Text(t.confirmedTrackVisit)),
                 ),
               ]),
@@ -864,4 +923,3 @@ class ConfirmedScreen extends ConsumerWidget {
     );
   }
 }
-

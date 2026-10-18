@@ -1,14 +1,14 @@
-"""P1-06 tests — credential seeding fail-safe + owner-bootstrap allowlist.
+"""Staff PIN seeding and fail-closed, allowlist-only owner access.
 
 Policy under test:
 - A fresh database with no STAFF_SEED_OWNER_PIN/STAFF_SEED_STAFF_PIN and no
   explicit opt-in seeds ZERO staff rows and logs a loud refusal (fails safe:
   no login at all, never a login whose credential is public in the repo).
 - RASOI_ALLOW_DEFAULT_STAFF_PIN=1 is the explicit dev/test-only opt-in.
-- Explicitly configured PINs seed and authenticate normally.
+- Explicitly configured PINs seed rows; only staff rows authenticate by PIN.
 - No log line ever contains a credential value.
-- STAFF_BOOTSTRAP_OWNER_EMAILS gates the automatic first-bootstrap owner
-  role; unverified/non-listed emails bootstrap as plain staff.
+- Only verified Google identities on STAFF_BOOTSTRAP_OWNER_EMAILS can become
+  owners. Uninvited Firebase identities cannot bootstrap staff.
 """
 import os
 import tempfile
@@ -73,8 +73,7 @@ def test_configured_pins_seed_and_authenticate(monkeypatch):
     app_module.app.testing = True
     with app_module.app.test_client() as c:
         owner = c.post("/api/staff/login", json={"phone": OWNER_PHONE, "pin": "738291"})
-        assert owner.status_code == 200, owner.get_json()
-        assert owner.get_json()["staff"]["role"] == "owner"
+        assert owner.status_code == 401, owner.get_json()
         ops = c.post("/api/staff/login", json={"phone": STAFF_PHONE, "pin": "481902"})
         assert ops.status_code == 200, ops.get_json()
         assert ops.get_json()["staff"]["role"] == "staff"
@@ -108,37 +107,35 @@ def _wipe_staff():
     conn.close()
 
 
-def test_owner_allowlist_non_listed_email_becomes_staff(client, monkeypatch, capsys):
+def test_non_allowlisted_firebase_identity_cannot_bootstrap_staff(client, monkeypatch):
     _wipe_staff()
     monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", {"real-owner@example.com"})
     mock_firebase_claims(monkeypatch, uid="intruder-uid",
                          email="intruder@example.com", email_verified=True)
     resp = client.post("/api/staff/bootstrap", json={"role": "owner"}, headers=auth_headers("x"))
-    assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["role"] == "staff"
-    out = capsys.readouterr().out
-    assert "allowlist" in out
+    assert resp.status_code == 403, resp.get_json()
     conn = database.get_db()
-    n = conn.execute("SELECT COUNT(*) AS n FROM staff WHERE role = 'owner'").fetchone()["n"]
+    n = conn.execute("SELECT COUNT(*) AS n FROM staff").fetchone()["n"]
     conn.close()
     assert n == 0
 
 
 def test_owner_allowlist_listed_verified_email_becomes_owner(client, monkeypatch):
-    _wipe_staff()
     # NOTE: patch the NORMALIZED form — the module lowercases env values when
     # parsing STAFF_BOOTSTRAP_OWNER_EMAILS; matching is case-insensitive by
     # normalization, not by comparison.
     monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS",
                         {"real-owner@example.com", "owner@example.com"})
     mock_firebase_claims(monkeypatch, uid="owner-uid",
-                         email="Owner@Example.COM", email_verified=True)
+                         email="Owner@Example.COM", email_verified=True,
+                         sign_in_provider="google.com")
     resp = client.post("/api/staff/bootstrap", json={}, headers=auth_headers("x"))
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["role"] == "owner"
+    assert resp.get_json()["id"] == "staff_owner"
 
 
-def test_owner_allowlist_listed_but_unverified_email_becomes_staff(client, monkeypatch):
+def test_allowlisted_but_unverified_email_cannot_bootstrap(client, monkeypatch):
     _wipe_staff()
     monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", {"real-owner@example.com"})
     # claims email_verified=False — Firebase never confirmed the address,
@@ -146,15 +143,71 @@ def test_owner_allowlist_listed_but_unverified_email_becomes_staff(client, monke
     mock_firebase_claims(monkeypatch, uid="unverified-uid",
                          email="real-owner@example.com", email_verified=False)
     resp = client.post("/api/staff/bootstrap", json={}, headers=auth_headers("x"))
-    assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["role"] == "staff"
+    assert resp.status_code == 403, resp.get_json()
 
 
-def test_unset_allowlist_keeps_first_come_owner_behavior(client, monkeypatch):
+def test_unset_allowlist_fails_closed(client, monkeypatch):
     _wipe_staff()
     monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", set())
     mock_firebase_claims(monkeypatch, uid="first-uid",
                          email="first@example.com", email_verified=True)
     resp = client.post("/api/staff/bootstrap", json={}, headers=auth_headers("x"))
+    assert resp.status_code == 403, resp.get_json()
+    conn = database.get_db()
+    n = conn.execute("SELECT COUNT(*) AS n FROM staff WHERE firebase_uid = ?", ("first-uid",)).fetchone()["n"]
+    conn.close()
+    assert n == 0
+
+
+def test_seeded_pin_owner_row_links_only_to_allowlisted_google_identity(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", {"real-owner@example.com"})
+    mock_firebase_claims(monkeypatch, uid="owner-uid", email="real-owner@example.com",
+                         email_verified=True, sign_in_provider="google.com")
+    resp = client.post("/api/staff/bootstrap", json={"role": "staff"}, headers=auth_headers("x"))
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["role"] == "owner"
+    assert resp.get_json()["id"] == "staff_owner"
+
+
+def test_verified_phone_only_links_an_existing_staff_invitation(client, monkeypatch):
+    mock_firebase_claims(monkeypatch, uid="ops-uid", phone_number="+919822000002")
+    resp = client.post("/api/staff/bootstrap", json={"role": "owner"}, headers=auth_headers("x"))
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["role"] == "staff"
+    assert resp.get_json()["id"] == "staff_ops"
+
+
+def test_uninvited_phone_cannot_bootstrap_staff(client, monkeypatch):
+    mock_firebase_claims(monkeypatch, uid="tech-uid", phone_number="+919999999999")
+    resp = client.post("/api/staff/bootstrap", json={}, headers=auth_headers("x"))
+    assert resp.status_code == 403, resp.get_json()
+
+
+def test_owner_endpoint_rejects_staff_jwt_even_if_role_is_owner(client, monkeypatch):
+    _wipe_staff()
+    monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", {"real-owner@example.com"})
+    mock_firebase_claims(monkeypatch, uid="owner-uid", email="real-owner@example.com",
+                         email_verified=True, sign_in_provider="google.com")
+    bootstrap = client.post("/api/staff/bootstrap", json={}, headers=auth_headers("x"))
+    assert bootstrap.status_code == 200
+    token = app_module.generate_staff_token(bootstrap.get_json()["id"])
+    # Listing is staff-gated; use the owner-only create route to assert the
+    # stricter Google identity requirement.
+    resp = client.post("/api/staff", json={"name": "Other", "phone": "9000000000",
+                                           "pin": "8642", "role": "staff"},
+                       headers=auth_headers(token))
+    assert resp.status_code == 403
+
+
+def test_owner_invite_cannot_create_another_owner_pin_account(client, monkeypatch):
+    _wipe_staff()
+    monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", {"real-owner@example.com"})
+    mock_firebase_claims(monkeypatch, uid="owner-uid", email="real-owner@example.com",
+                         email_verified=True, sign_in_provider="google.com")
+    bootstrap = client.post("/api/staff/bootstrap", json={}, headers=auth_headers("x"))
+    token = "x"
+    resp = client.post("/api/staff", json={"name": "Extra Owner", "phone": "9000000000",
+                                           "pin": "8642", "role": "owner"},
+                       headers=auth_headers(token))
+    assert bootstrap.status_code == 200
+    assert resp.status_code == 400

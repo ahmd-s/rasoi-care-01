@@ -10,13 +10,21 @@ import 'package:go_router/go_router.dart';
 import '../../core/widgets/care_widgets.dart';
 import '../../data/api/passport_api.dart';
 import '../../data/api/vision_api.dart';
+import '../../l10n/l10n_extensions.dart';
 import '../../state/providers.dart';
 import 'ai_result_view.dart';
 import 'ai_review_panel.dart';
 import 'passport_catalog.dart';
 import 'photo_source.dart';
 
-enum _Phase { loading, loadError, unavailable, capture, progress, done }
+/// Client-side hard stop for the client-testing builds: Vision AI is shown as
+/// "Coming Soon" and the screen makes no request at all, whatever the server
+/// reports. Only a build with `--dart-define=ENABLE_VISION_AI_UI=true` (not
+/// part of client testing) turns the capture flow back on. Tests may flip it.
+@visibleForTesting
+bool visionAiComingSoonOnly = !const bool.fromEnvironment('ENABLE_VISION_AI_UI');
+
+enum _Phase { comingSoon, loading, loadError, unavailable, capture, progress, done }
 
 /// Delay before the next status poll: quick at first, then easing off.
 @visibleForTesting
@@ -112,6 +120,10 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
 
   // ---------------------------------------------------------------- loading
   Future<void> _load() async {
+    if (visionAiComingSoonOnly) {
+      setState(() => _phase = _Phase.comingSoon);
+      return;
+    }
     setState(() {
       _phase = _Phase.loading;
       _loadError = null;
@@ -127,7 +139,7 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
     }
     _config = cfg.value;
     if (!_config!.enabled) {
-      setState(() => _phase = _Phase.unavailable);
+      setState(() => _phase = _Phase.comingSoon);
       return;
     }
     // A job already running for this visit (e.g. the technician left and came
@@ -422,6 +434,14 @@ class _AiInspectionScreenState extends ConsumerState<AiInspectionScreen>
 
   Widget _body(BuildContext context) {
     switch (_phase) {
+      case _Phase.comingSoon:
+        return _scroll([
+          EmptyState(
+            glyph: '🔍',
+            title: context.l10n.comingSoonTitle('Vision AI'),
+            body: context.l10n.visionComingSoonBody,
+          ),
+        ]);
       case _Phase.loading:
         return const Center(child: CircularProgressIndicator());
       case _Phase.loadError:

@@ -91,7 +91,7 @@ def test_user_list_stays_small_with_blobs_present(client):
 def test_staff_list_stays_small_with_blobs_present(client):
     _user, _booking, _blobs = _make_booking_with_blobs(client)
     login = client.post(
-        "/api/staff/login", json={"phone": "9822000001", "pin": "1234"}
+        "/api/staff/login", json={"phone": "9822000002", "pin": "1234"}
     ).get_json()
     resp = client.get("/api/bookings?limit=50", headers=auth_headers(login["token"]))
     assert resp.status_code == 200
@@ -114,7 +114,7 @@ def test_booking_without_blobs_reports_not_ready(client):
     resp = client.get("/api/bookings", headers=auth_headers(user["token"]))
     # viewer has no bookings of their own — use the staff path instead
     login = client.post(
-        "/api/staff/login", json={"phone": "9822000001", "pin": "1234"}
+        "/api/staff/login", json={"phone": "9822000002", "pin": "1234"}
     ).get_json()
     resp = client.get("/api/bookings?limit=50", headers=auth_headers(login["token"]))
     row = next(r for r in resp.get_json() if r["id"] == booking["id"])
@@ -135,7 +135,7 @@ def test_detail_endpoint_booleans_unchanged(client):
 def test_stats_report_endpoint_stays_small(client):
     _user, _booking, _blobs = _make_booking_with_blobs(client)
     login = client.post(
-        "/api/staff/login", json={"phone": "9822000001", "pin": "1234"}
+        "/api/staff/login", json={"phone": "9822000002", "pin": "1234"}
     ).get_json()
     resp = client.get("/api/stats/reports?period=week", headers=auth_headers(login["token"]))
     assert resp.status_code == 200

@@ -128,7 +128,16 @@ class FirebaseAuthService implements AuthService {
         // implementation detail for any error code not explicitly handled
         // above (a future SDK version's new code, network-request-failed,
         // internal-error, ...).
-        _ => 'Something went wrong. Try again.',
+        'network-request-failed' => 'No internet connection. Check your network and try again.',
+        'operation-not-allowed' =>
+          'This sign-in method is not enabled for this app yet (code: operation-not-allowed).',
+        'app-not-authorized' || 'missing-client-identifier' || 'invalid-app-credential' ||
+        'captcha-check-failed' || 'missing-app-credential' =>
+          'This build is not authorised for phone sign-in yet — the app fingerprint must be registered in Firebase (code: ${e.code}).',
+        'quota-exceeded' => 'SMS limit reached for now. Try a Firebase test number or wait (code: quota-exceeded).',
+        // Only the non-secret error code is appended, so a tester can report
+        // what actually failed; Firebase's own message text is still not shown.
+        _ => 'Something went wrong (code: ${e.code}). Try again.',
       };
     }
     return 'Something went wrong. Try again.';

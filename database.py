@@ -140,6 +140,17 @@ CREATE TABLE IF NOT EXISTS complaints (
     created_at      TEXT NOT NULL
 );
 
+-- Replay guard for POST /api/bookings/cart: a retried/double-tapped checkout
+-- sends the same Idempotency-Key and gets the original response back instead
+-- of creating (and charging coins for) a second set of bookings.
+CREATE TABLE IF NOT EXISTS booking_idempotency (
+    user_id       TEXT NOT NULL,
+    idem_key      TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (user_id, idem_key)
+);
+
 CREATE TABLE IF NOT EXISTS counters (
     name    TEXT PRIMARY KEY,
     value   INTEGER NOT NULL

@@ -6,6 +6,7 @@ import 'package:care_plus_partner/data/api/passport_api.dart';
 import 'package:care_plus_partner/data/api/vision_api.dart';
 import 'package:care_plus_partner/features/passport/ai_inspection_screen.dart';
 import 'package:care_plus_partner/features/passport/inspection_catalog.dart';
+import 'package:care_plus_partner/l10n/app_localizations.dart';
 import 'package:care_plus_partner/features/passport/photo_source.dart';
 import 'package:care_plus_partner/state/providers.dart';
 import 'package:flutter/material.dart';
@@ -240,6 +241,8 @@ Future<void> _pump(
         if (passport != null) passportApiProvider.overrideWithValue(passport),
       ],
       child: MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         theme: CarePlusTheme.light(),
         builder: (c, child) => MediaQuery(
           data: MediaQuery.of(
@@ -281,7 +284,24 @@ Future<void> _reveal(WidgetTester tester, Finder f) async {
 Finder get _analyse => find.byType(FilledButton);
 
 void main() {
-  testWidgets('disabled AI: explains it is unavailable and offers no capture', (
+  setUpAll(() => visionAiComingSoonOnly = false);
+
+  testWidgets('client-testing builds stay Coming Soon even if the server enables AI', (
+    tester,
+  ) async {
+    visionAiComingSoonOnly = true;
+    addTearDown(() => visionAiComingSoonOnly = false);
+    await _pump(
+      tester,
+      _FakeVision(config: _config(enabled: true)),
+      _FakeCamera(),
+    );
+    expect(find.text('Vision AI is coming soon'), findsOneWidget);
+    expect(find.text('Take photo'), findsNothing);
+    expect(find.byType(FilledButton), findsNothing);
+  });
+
+  testWidgets('disabled AI is clearly marked coming soon and offers no capture', (
     tester,
   ) async {
     await _pump(
@@ -289,9 +309,9 @@ void main() {
       _FakeVision(config: _config(enabled: false)),
       _FakeCamera(),
     );
-    expect(find.text('AI photo inspection is not available'), findsOneWidget);
+    expect(find.text('Vision AI is coming soon'), findsOneWidget);
     expect(find.text('Take photo'), findsNothing);
-    expect(find.textContaining('scores are unchanged'), findsOneWidget);
+    expect(find.textContaining('does not affect appliance scores'), findsOneWidget);
   });
 
   testWidgets('config failure shows a retry', (tester) async {
@@ -805,6 +825,8 @@ void main() {
             passportApiProvider.overrideWithValue(_CountingPassport()),
           ],
           child: MaterialApp.router(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             theme: CarePlusTheme.light(),
             routerConfig: router,
           ),

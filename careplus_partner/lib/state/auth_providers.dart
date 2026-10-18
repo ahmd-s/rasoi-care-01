@@ -9,11 +9,13 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 
 import '../data/api/api_config.dart';
+import '../data/api/staff_bootstrap_service.dart';
 import '../data/auth/auth_service.dart';
 import '../data/auth/firebase_auth_service.dart';
 import '../data/auth/mock_auth_service.dart';
 import '../data/firestore/technician_profile_service.dart';
 import '../data/firebase/technician_upload_service.dart';
+import '../data/operations/models.dart';
 import 'providers.dart';
 
 /// Picks the real service if `Firebase.initializeApp()` succeeded in
@@ -27,6 +29,22 @@ final technicianProfileServiceProvider =
 
 final technicianUploadServiceProvider =
     Provider<TechnicianUploadService>((ref) => TechnicianUploadService());
+
+final staffBootstrapServiceProvider = Provider<StaffBootstrapService>(
+  (ref) => StaffBootstrapService(),
+);
+
+/// Router-level snapshot: owner routes default closed until the backend role
+/// has been loaded from a verified Firebase identity.
+AdminRole? latestKnownStaffRole;
+
+/// Technician bootstrap call, overridable in tests.
+final technicianBootstrapProvider =
+    Provider<Future<Map<String, dynamic>?> Function()>((ref) => bootstrapTechnicianBackend);
+
+final currentRoleProvider = Provider<AdminRole>(
+  (ref) => ref.watch(authFlowProvider).staffRole ?? AdminRole.staff,
+);
 
 /// The signed-in technician's own record — see [fetchTechnicianMe].
 /// Populated by TechJobsScreen's initial refresh and re-populated by
@@ -74,6 +92,19 @@ Future<Map<String, dynamic>?> bootstrapTechnicianBackend() async {
   } catch (_) {
     return null; // Backend unreachable or not deployed yet — never blocks sign-in.
   }
+}
+
+/// Resolves staff/owner access from the backend for a returning Firebase
+/// session. A null role means this identity must continue through technician
+/// onboarding; the client never infers a privileged role itself.
+Future<AdminRole?> refreshStaffRole(WidgetRef ref) async {
+  final result = await ref.read(staffBootstrapServiceProvider).bootstrap();
+  // A definitive "not staff" answer must also clear any role left over from
+  // an earlier session on this device; a transient error keeps what we have.
+  if (result.role != null || result.notStaff) {
+    ref.read(authFlowProvider.notifier).setStaffRole(result.role);
+  }
+  return result.role;
 }
 
 /// Re-checks status without re-bootstrapping — used by SplashScreen for a
@@ -196,6 +227,10 @@ TechnicianStage stageFromTechnicianJson(Map<String, dynamic>? json) {
 /// biometric login?" offer instead, gated on the device actually
 /// supporting it (see BiometricService.hasPrompted).
 Future<void> routeToStage(BuildContext context, WidgetRef ref, TechnicianStage stage) async {
+  if (ref.read(authFlowProvider).staffRole != null) {
+    context.go('/ops/overview');
+    return;
+  }
   switch (stage) {
     case TechnicianStage.apply:
       context.go('/tech/apply');
@@ -221,6 +256,7 @@ class AuthFlowState {
     this.submitting = false,
     this.error,
     this.stage = TechnicianStage.jobs,
+    this.staffRole,
   });
   final String phone;
   final String? verificationId;
@@ -233,6 +269,7 @@ class AuthFlowState {
   /// Where to route after a successful sign-in — set from the bootstrap
   /// response, see [bootstrapTechnicianBackend].
   final TechnicianStage stage;
+  final AdminRole? staffRole;
 
   AuthFlowState copyWith({
     String? phone,
@@ -243,6 +280,8 @@ class AuthFlowState {
     String? error,
     bool clearError = false,
     TechnicianStage? stage,
+    AdminRole? staffRole,
+    bool clearStaffRole = false,
   }) =>
       AuthFlowState(
         phone: phone ?? this.phone,
@@ -252,6 +291,7 @@ class AuthFlowState {
         submitting: submitting ?? this.submitting,
         error: clearError ? null : (error ?? this.error),
         stage: stage ?? this.stage,
+        staffRole: clearStaffRole ? null : (staffRole ?? this.staffRole),
       );
 }
 
@@ -267,6 +307,9 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
   bool get isMock => !ref.read(authServiceProvider).isLive;
 
   Future<bool> sendOtp(String tenDigitPhone) async {
+    // A new phone sign-in is a new identity: never inherit a previous
+    // owner/staff role from this device.
+    _setStaffRole(null);
     state = state.copyWith(sending: true, clearError: true, phone: tenDigitPhone);
     try {
       final result = await ref.read(authServiceProvider).sendOtp('+91$tenDigitPhone');
@@ -292,7 +335,22 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
     try {
       await ref.read(authServiceProvider).verifyOtp(verificationId: vid, smsCode: code);
       unawaited(ref.read(technicianProfileServiceProvider).touchProfile());
-      final tech = await bootstrapTechnicianBackend();
+      final staff = await ref.read(staffBootstrapServiceProvider).bootstrap();
+      if (staff.role != null) {
+        _setStaffRole(staff.role);
+        state = state.copyWith(verifying: false, stage: TechnicianStage.jobs);
+        return true;
+      }
+      // Not (or not known to be) staff: make sure no stale role survives.
+      _setStaffRole(null);
+      final tech = await ref.read(technicianBootstrapProvider)();
+      if (tech == null && ref.read(authServiceProvider).isLive) {
+        // Fail closed: never present an unknown application status as jobs.
+        state = state.copyWith(
+            verifying: false,
+            error: 'Could not load your application status. Try again.');
+        return false;
+      }
       state = state.copyWith(verifying: false, stage: stageFromTechnicianJson(tech));
       return true;
     } on AuthException catch (e) {
@@ -310,14 +368,31 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
   Future<bool> signInWithEmail(String email, String password) => _submit(
       () => ref.read(authServiceProvider).signInWithEmail(email: email, password: password));
 
-  Future<bool> signInWithGoogle() =>
-      _submit(() => ref.read(authServiceProvider).signInWithGoogle());
+  Future<bool> signInWithGoogle() => _submit(
+        () => ref.read(authServiceProvider).signInWithGoogle(),
+        staffOnly: true,
+      );
 
-  Future<bool> _submit(Future<void> Function() action) async {
+  Future<bool> _submit(Future<void> Function() action, {bool staffOnly = false}) async {
     state = state.copyWith(submitting: true, clearError: true);
     try {
       await action();
       unawaited(ref.read(technicianProfileServiceProvider).touchProfile());
+      if (staffOnly) {
+        final staff = await ref.read(staffBootstrapServiceProvider).bootstrap();
+        if (staff.role == null) {
+          await ref.read(authServiceProvider).signOut();
+          _setStaffRole(null);
+          state = state.copyWith(
+            submitting: false,
+            error: staff.error ?? 'This Google account is not authorized for Partner controls.',
+          );
+          return false;
+        }
+        _setStaffRole(staff.role);
+        state = state.copyWith(submitting: false, stage: TechnicianStage.jobs);
+        return true;
+      }
       final tech = await bootstrapTechnicianBackend();
       state = state.copyWith(submitting: false, stage: stageFromTechnicianJson(tech));
       return true;
@@ -330,5 +405,15 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
     }
   }
 
-  void reset() => state = const AuthFlowState();
+  void _setStaffRole(AdminRole? role) {
+    latestKnownStaffRole = role;
+    state = state.copyWith(staffRole: role, clearStaffRole: role == null);
+  }
+
+  void setStaffRole(AdminRole? role) => _setStaffRole(role);
+
+  void reset() {
+    latestKnownStaffRole = null;
+    state = const AuthFlowState();
+  }
 }

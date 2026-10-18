@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/widgets/care_widgets.dart';
 import '../../data/api/passport_api.dart';
+import '../../l10n/l10n_extensions.dart';
 import '../../state/providers.dart';
 import 'health_widgets.dart';
 import 'inspection_catalog.dart';
@@ -194,7 +195,7 @@ class _InspectionScreenState extends ConsumerState<InspectionScreen> {
                                 if (mounted) _refreshHealth();
                               },
                               icon: const Icon(Icons.photo_camera_outlined),
-                              label: const Text('Photo inspection (AI, advisory)'),
+                              label: Text(context.l10n.visionComingSoonLabel),
                             ),
                             const SizedBox(height: 16),
                             for (final item in _items) ...[

@@ -1,6 +1,7 @@
 import 'package:care_plus_partner/core/theme/care_plus_theme.dart';
 import 'package:care_plus_partner/data/api/passport_api.dart';
 import 'package:care_plus_partner/features/passport/inspection_catalog.dart';
+import 'package:care_plus_partner/l10n/app_localizations.dart';
 import 'package:care_plus_partner/features/passport/inspection_screen.dart';
 import 'package:care_plus_partner/features/passport/kitchen_passport_screen.dart';
 import 'package:care_plus_partner/state/providers.dart';
@@ -82,6 +83,8 @@ Future<void> _pump(WidgetTester tester, _FakeApi api, {Size size = const Size(36
   await tester.pumpWidget(ProviderScope(
     overrides: [passportApiProvider.overrideWithValue(api)],
     child: MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       theme: CarePlusTheme.light(),
       home: const InspectionScreen(jobId: 'B-1', appliance: _hob),
     ),
@@ -225,7 +228,10 @@ void main() {
         passportApiProvider.overrideWithValue(_FakeApi()),
         kitchenAppliancesProvider('B-1').overrideWith((_) async => [_hob]),
       ],
-      child: MaterialApp.router(routerConfig: router, theme: CarePlusTheme.light()),
+      child: MaterialApp.router(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        routerConfig: router, theme: CarePlusTheme.light()),
     ));
     await tester.pumpAndSettle();
     expect(find.text('Open checklist ›'), findsOneWidget);
@@ -332,7 +338,10 @@ void main() {
         kitchenAppliancesProvider('B-1').overrideWith((_) async => [_hob]),
         kitchenHealthProvider('B-1').overrideWith((_) async => kitchen),
       ],
-      child: MaterialApp.router(routerConfig: router, theme: CarePlusTheme.light()),
+      child: MaterialApp.router(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        routerConfig: router, theme: CarePlusTheme.light()),
     ));
     await tester.pumpAndSettle();
     expect(find.text('1 of 2 appliances assessed'), findsOneWidget);

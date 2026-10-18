@@ -11,7 +11,7 @@ mkdir -p /tmp/rasoi-local && cp *.py requirements.txt /tmp/rasoi-local/ && cd /t
 pip install -r requirements.txt
 export PORT=8420 JWT_SECRET=local-dev-only
 export STAFF_SEED_OWNER_PIN=$(openssl rand -hex 4) STAFF_SEED_STAFF_PIN=$(openssl rand -hex 4)
-python3 app.py          # note the two PINs from the exports above: the Admin app staff login needs the owner PIN
+python3 app.py          # local-only staff rows are seeded using the random PINs above
 ```
 **The dev server listens on all interfaces (0.0.0.0).** Use the random
 `STAFF_SEED_*` PINs above rather than `RASOI_ALLOW_DEFAULT_STAFF_PIN=1`, which

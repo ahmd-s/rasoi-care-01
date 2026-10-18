@@ -60,6 +60,23 @@ class ApiRepository implements CareRepository {
     }
   }
 
+  Future<void> _ensureBackendProfile() async {
+    if (Firebase.apps.isEmpty) return;
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final token = await _idToken();
+      if (user == null || token == null) return;
+      final name = (user.displayName ?? '').trim().isNotEmpty
+          ? user.displayName!
+          : (user.email ?? 'Customer');
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final ok = await _client.bootstrap(
+            idToken: token, name: name, timeout: const Duration(seconds: 40));
+        if (ok) return;
+      }
+    } catch (_) {}
+  }
+
   Future<void> _loadInitialBookings() async {
     final token = await _idToken();
     if (token == null) return;
@@ -228,6 +245,7 @@ class ApiRepository implements CareRepository {
     String? notes,
     List<String>? issues,
     DateTime? scheduledAt,
+    String? idempotencyKey,
   }) async {
     final token = await _idToken();
     if (token == null) return (bookings: null, error: 'You need to be signed in to book.');
@@ -244,8 +262,13 @@ class ApiRepository implements CareRepository {
       notes: notes,
       issues: issues,
       scheduledAt: scheduledAt,
+      idempotencyKey: idempotencyKey,
     );
     if (result.unauthorized) {
+      // Valid Firebase token but no backend profile yet: the post-sign-in
+      // bootstrap is fire-and-forget and is lost when the API is cold. Create
+      // it now (waiting for it), then retry once with a fresh token.
+      await _ensureBackendProfile();
       final freshToken = await _idToken(forceRefresh: true);
       if (freshToken != null) {
         result = await _client.createBookingCart(
@@ -260,10 +283,13 @@ class ApiRepository implements CareRepository {
           notes: notes,
           issues: issues,
           scheduledAt: scheduledAt,
+          idempotencyKey: idempotencyKey,
         );
       }
     }
-    if (result.bookings == null) return (bookings: null, error: result.error);
+    if (result.bookings == null || result.bookings!.isEmpty) {
+      return (bookings: null, error: result.error ?? 'Your booking could not be confirmed. Please try again.');
+    }
     final bookings = [for (final b in result.bookings!) _bookingFromJson(b)];
     _realBookings = [...(_realBookings ?? []), ...bookings];
     onBookingsChanged?.call();

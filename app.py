@@ -1234,7 +1234,7 @@ def technician_categories(row):
     return [row["category"]] if row["category"] else []
 
 
-def technician_row_to_dict(row, *, redact_documents=False):
+def technician_row_to_dict(row, *, redact_documents=False, redact_financial=False):
     keys = row.keys()
     d = {
         "id": row["id"],
@@ -1290,6 +1290,13 @@ def technician_row_to_dict(row, *, redact_documents=False):
     d["aadharDocumentBackReady"] = bool(d["aadharDocumentBackUrl"])
     d["panDocumentReady"] = bool(d["panDocumentUrl"])
     d["bankPassbookReady"] = bool(d["bankPassbookUrl"])
+    if redact_financial:
+        # Payout bank/UPI/GST details are owner-only financial data; staff
+        # views of a technician never include them.
+        for field in ("bankAccountName", "bankAccountNumber", "bankIfsc", "upiId", "gstNumber",
+                      "bankPassbookUrl"):
+            d[field] = None
+        d["bankPassbookReady"] = False
     if redact_documents:
         # These are long-lived, non-expiring Firebase Storage URLs whose
         # only "auth" is an unguessable token in the query string — handing
@@ -1500,6 +1507,7 @@ def verify_firebase_token(id_token):
             # has actually verified it — safe to trust over anything the
             # client claims about its own phone number.
             "phone_number": payload.get("phone_number"),
+            "sign_in_provider": (payload.get("firebase") or {}).get("sign_in_provider"),
         }
     except Exception as e:
         print(f"verify_firebase_token: rejected — {e}", file=sys.stderr)
@@ -1606,12 +1614,36 @@ def require_staff_auth(fn):
     return wrapper
 
 
+def _owner_identity_ok():
+    """True only for an owner row whose live request carries a verified,
+    allowlisted Google Firebase identity. A legacy staff JWT (including one
+    from phone/PIN login) never qualifies. Call inside a request that has
+    already passed require_staff_auth."""
+    if request.staff["role"] != "owner":
+        return False
+    token = get_bearer_token()
+    if not token or decode_staff_token(token):
+        return False
+    claims = verify_firebase_token(token)
+    email = (claims.get("email") or "").strip().lower() if claims else ""
+    return bool(
+        claims and claims.get("sign_in_provider") == "google.com" and
+        claims.get("email_verified") and email and
+        email in _STAFF_BOOTSTRAP_OWNER_EMAILS
+    )
+
+
 def require_owner(fn):
     @wraps(fn)
     @require_staff_auth
     def wrapper(*args, **kwargs):
         if request.staff["role"] != "owner":
             return jsonify({"error": "Forbidden", "message": "Owner role required"}), 403
+        # Owner actions require a live Firebase identity whose verified
+        # address is explicitly configured. A legacy staff JWT (including
+        # one minted by the phone/PIN endpoint) is never sufficient.
+        if not _owner_identity_ok():
+            return jsonify({"error": "Forbidden", "message": "Verified allowlisted Google identity required"}), 403
         return fn(*args, **kwargs)
     return wrapper
 
@@ -1681,9 +1713,13 @@ def staff_login():
     row = conn.execute("SELECT * FROM staff WHERE phone = ?", (phone,)).fetchone()
     conn.close()
     ok = bool(row and row["active"] and check_password_hash(row["pin_hash"], pin))
-    _auth_gate_record(phone, ok)
-    if not ok:
+    # Owner accounts are Google-identity-only. Return the same response for
+    # any PIN attempt so callers cannot use status differences to confirm a
+    # correct owner PIN.
+    if not ok or row["role"] == "owner":
+        _auth_gate_record(phone, False)
         return jsonify({"error": "Invalid phone or PIN"}), 401
+    _auth_gate_record(phone, True)
     return jsonify({"token": generate_staff_token(row["id"]), "staff": staff_row_to_dict(row)})
 
 
@@ -1693,12 +1729,9 @@ def staff_me():
     return jsonify(staff_row_to_dict(request.staff))
 
 
-# Optional hardening (P1-06): comma-separated email allowlist. When set,
-# the automatic first-bootstrap owner role is granted ONLY to these emails
-# (case-insensitive, and only when the Firebase token marks the email
-# verified); everyone else bootstrap-creates as plain staff with a logged
-# warning. When unset, the historical first-come behavior applies — the
-# very first person to bootstrap a fresh deployment becomes owner.
+# Comma-separated, case-insensitive owner identity allowlist. Missing or
+# empty configuration fails closed: it never creates an owner or a staff
+# record through public Firebase bootstrap.
 _STAFF_BOOTSTRAP_OWNER_EMAILS = {
     e.strip().lower()
     for e in (os.environ.get("STAFF_BOOTSTRAP_OWNER_EMAILS") or "").split(",")
@@ -1712,18 +1745,13 @@ _STAFF_BOOTSTRAP_OWNER_EMAILS = {
     "role": Field(str, choices=("owner", "staff")),
 })
 def bootstrap_staff():
-    """Called once right after Firebase sign-in/sign-up in the Admin app.
-    The very first person to bootstrap becomes 'owner' automatically (a
-    fresh deployment has no staff yet); everyone after that is always
-    created as plain 'staff' regardless of what `role` they send — only
-    an existing owner's invite flow (POST /api/staff, @require_owner) may
-    mint a new owner. The `role` field is accepted for backward
-    compatibility with older clients but is otherwise ignored.
+    """Resolve an existing staff invitation or the explicitly allowlisted owner.
 
-    Hardened twice (P1-06): with STAFF_BOOTSTRAP_OWNER_EMAILS configured,
-    the automatic owner role is allowlist-gated (see above); and the
-    first-come check + insert runs inside a serialized transaction, so two
-    simultaneous first-bootstraps can no longer BOTH claim owner (N13)."""
+    Public Firebase sign-up never creates a staff account. Existing staff
+    rows can be linked by Firebase UID, verified email, or verified phone;
+    a new owner is created only for a verified email in the configured
+    allowlist. Client-requested roles are ignored.
+    """
     token = get_bearer_token()
     claims = verify_firebase_token(token) if token else None
     if not claims:
@@ -1731,6 +1759,13 @@ def bootstrap_staff():
 
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or claims.get("name") or "").strip() or "Staff"
+    email = (claims.get("email") or "").strip().lower()
+    verified_email = bool(email and claims.get("email_verified"))
+    is_allowlisted_owner = bool(
+        verified_email and claims.get("sign_in_provider") == "google.com" and
+        _STAFF_BOOTSTRAP_OWNER_EMAILS and
+        email in _STAFF_BOOTSTRAP_OWNER_EMAILS
+    )
 
     conn = get_db()
     # Serialize the "is there any staff yet?" decision against concurrent
@@ -1745,24 +1780,77 @@ def bootstrap_staff():
         conn.execute("SELECT pg_advisory_xact_lock(hashtext('rasoicare-owner-bootstrap'))")
     try:
         row = conn.execute("SELECT * FROM staff WHERE firebase_uid = ?", (claims["uid"],)).fetchone()
-        if not row and claims.get("email") and claims.get("email_verified"):
-            row = conn.execute("SELECT * FROM staff WHERE email = ?", (claims["email"],)).fetchone()
+        if not row and verified_email:
+            row = conn.execute(
+                "SELECT * FROM staff WHERE LOWER(email) = ?", (email,)
+            ).fetchone()
+        phone_digits = re.sub(r"\D", "", str(claims.get("phone_number") or ""))
+        if not row and 10 <= len(phone_digits) <= 15:
+            # Firebase only supplies phone_number after phone verification.
+            # Match the existing invited staff roster; never create staff
+            # from a new phone number here.
+            candidates = conn.execute(
+                "SELECT * FROM staff WHERE phone IS NOT NULL AND active = 1"
+            ).fetchall()
+            matches = [
+                candidate for candidate in candidates
+                if re.sub(r"\D", "", str(candidate["phone"] or ""))[-10:] == phone_digits[-10:]
+            ]
+            if len(matches) == 1:
+                row = matches[0]
+
         ts = now()
+        if row and not row["active"] and row["role"] != "owner":
+            # A deactivated staff assignment grants nothing and is not
+            # touched: this identity is simply "not staff" (it may still be
+            # an approved technician, which lives in a separate table).
+            conn.rollback()
+            conn.close()
+            return jsonify({"error": "Forbidden", "message": "No active staff invitation for this identity"}), 403
         if row:
+            role = row["role"]
+            if is_allowlisted_owner:
+                role = "owner"
+            # Existing owner records may only be attached to the allowlisted
+            # verified Google identity. This prevents an old PIN-only owner
+            # record from silently becoming an owner through phone auth.
+            elif role == "owner":
+                conn.rollback()
+                conn.close()
+                return jsonify({"error": "Forbidden", "message": "Verified allowlisted Google identity required"}), 403
             conn.execute(
-                "UPDATE staff SET firebase_uid = ?, name = ? WHERE id = ?",
-                (claims["uid"], name, row["id"]),
+                "UPDATE staff SET firebase_uid = ?, email = COALESCE(email, ?), name = ?, role = ? WHERE id = ?",
+                (claims["uid"], email if verified_email else None, name, role, row["id"]),
             )
             staff_id = row["id"]
+        elif is_allowlisted_owner:
+            # Reuse one unlinked owner roster row when present (for example,
+            # the staging PIN-seeded row), otherwise provision this one
+            # explicitly allowlisted identity as owner. Other staff rows do
+            # not prevent the configured owner from joining.
+            unlinked_owner = conn.execute(
+                "SELECT * FROM staff WHERE role = 'owner' AND active = 1 "
+                "AND (firebase_uid IS NULL OR firebase_uid = '') "
+                "AND (email IS NULL OR email = '') ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if unlinked_owner:
+                staff_id = unlinked_owner["id"]
+                conn.execute(
+                    "UPDATE staff SET firebase_uid = ?, email = ?, name = ? WHERE id = ?",
+                    (claims["uid"], email, name, staff_id),
+                )
+            else:
+                staff_id = new_uuid_id("STF")
+                conn.execute(
+                    "INSERT INTO staff (id, name, phone, email, pin_hash, role, active, created_at, firebase_uid) "
+                    "VALUES (?,?,?,?,?,'owner',1,?,?)",
+                    (staff_id, name, f"fb-{claims['uid'][:24]}", email,
+                     "firebase-auth", ts, claims["uid"]),
+                )
         else:
-            role = _decide_first_bootstrap_role(conn, claims)
-            staff_id = new_uuid_id("STF")
-            conn.execute(
-                "INSERT INTO staff (id, name, phone, email, pin_hash, role, active, created_at, firebase_uid) "
-                "VALUES (?,?,?,?,?,?,1,?,?)",
-                (staff_id, name, f"fb-{claims['uid'][:24]}", claims.get("email"),
-                 "firebase-auth", role, ts, claims["uid"]),
-            )
+            conn.rollback()
+            conn.close()
+            return jsonify({"error": "Forbidden", "message": "No active staff invitation for this identity"}), 403
         conn.commit()
     except Exception:
         try:
@@ -1777,34 +1865,8 @@ def bootstrap_staff():
     return jsonify(staff_row_to_dict(row))
 
 
-def _decide_first_bootstrap_role(conn, claims):
-    """Role for a brand-new staff row on a fresh deployment — 'owner' for
-    the legitimate first bootstrap, 'staff' otherwise. MUST be called on
-    the caller's already-serialized connection (BEGIN IMMEDIATE on SQLite
-    / advisory lock on Postgres) so the any-staff check is covered by the
-    same lock that guards the insert — that's the N13 race fix. Isolated
-    as a function so the allowlist policy is unit-testable in one place."""
-    any_staff = conn.execute("SELECT 1 FROM staff LIMIT 1").fetchone()
-    if any_staff:
-        return "staff"
-    if _STAFF_BOOTSTRAP_OWNER_EMAILS:
-        email = (claims.get("email") or "").strip().lower()
-        verified = bool(claims.get("email_verified"))
-        if email and verified and email in _STAFF_BOOTSTRAP_OWNER_EMAILS:
-            return "owner"
-        print(
-            "SECURITY: first bootstrap did not claim the owner role — its "
-            "verified email is not on the STAFF_BOOTSTRAP_OWNER_EMAILS "
-            "allowlist (or the email is missing/unverified); created as "
-            "plain staff instead.",
-            flush=True,
-        )
-        return "staff"
-    return "owner"
-
-
 @app.route("/api/staff", methods=["GET"])
-@require_staff_auth
+@require_owner
 def list_staff():
     conn = get_db()
     rows = conn.execute("SELECT * FROM staff ORDER BY name").fetchall()
@@ -1830,6 +1892,8 @@ def invite_staff():
         return jsonify({"error": "name, phone, and a pin of at least 4 digits are required"}), 400
     if role not in ("owner", "staff"):
         return jsonify({"error": "role must be 'owner' or 'staff'"}), 400
+    if role == "owner":
+        return jsonify({"error": "Owner access is granted only to an allowlisted, verified Google identity"}), 400
 
     conn = get_db()
     existing = conn.execute("SELECT id FROM staff WHERE phone = ?", (phone,)).fetchone()
@@ -1865,6 +1929,9 @@ def update_staff(staff_id):
     if role not in ("owner", "staff"):
         conn.close()
         return jsonify({"error": "role must be 'owner' or 'staff'"}), 400
+    if role == "owner":
+        conn.close()
+        return jsonify({"error": "Owner access is granted only to an allowlisted, verified Google identity"}), 400
     conn.execute("UPDATE staff SET role = ?, active = ? WHERE id = ?", (role, active, staff_id))
     conn.commit()
     row = conn.execute("SELECT * FROM staff WHERE id = ?", (staff_id,)).fetchone()
@@ -2723,6 +2790,18 @@ def create_booking_cart():
     data = request.get_json(force=True, silent=True) or {}
     service_ids = data.get("serviceIds") or []
     use_coins = bool(data.get("useCoins"))
+    idem_key = (request.headers.get("Idempotency-Key") or "").strip() or None
+    if idem_key is not None and not re.fullmatch(r"[A-Za-z0-9_\-]{8,64}", idem_key):
+        return jsonify({"error": "Invalid Idempotency-Key"}), 400
+    if idem_key:
+        conn = get_db()
+        prior = conn.execute(
+            "SELECT response_json FROM booking_idempotency WHERE user_id = ? AND idem_key = ?",
+            (request.user["id"], idem_key),
+        ).fetchone()
+        conn.close()
+        if prior:
+            return app.response_class(prior["response_json"], status=201, mimetype="application/json")
     scheduled_at = data.get("scheduledAt")
     area = (data.get("area") or "").strip() or None
     address_line = (data.get("addressLine") or "").strip() or None
@@ -2818,7 +2897,6 @@ def create_booking_cart():
              notes, issues_json, start_code, scheduled_at, address_line, city),
         )
         created_ids.append((booking_id, service, start_code))
-    conn.commit()
 
     bookings_out = []
     for booking_id, _service, _start_code in created_ids:
@@ -2828,6 +2906,37 @@ def create_booking_cart():
         bookings_out.append(booking_row_to_dict(
             row, include_start_code=True, parts=parts, service_changes=service_changes,
         ))
+    response_body = {
+        "bookings": bookings_out,
+        "pricing": {
+            "subtotal": subtotal,
+            "visitFee": CART_VISIT_FEE,
+            "couponDiscount": coupon,
+            "gst": gst,
+            "coinsRedeemed": coins_redeemed,
+            "grandTotal": grand_total,
+        },
+    }
+    if idem_key:
+        # Same transaction as the bookings and the coin redemption: either
+        # all of it is committed together with the replay record, or none.
+        try:
+            conn.execute(
+                "INSERT INTO booking_idempotency (user_id, idem_key, response_json, created_at) VALUES (?,?,?,?)",
+                (request.user["id"], idem_key, json.dumps(response_body), ts),
+            )
+        except Exception:
+            # A concurrent request with the same key won the race.
+            conn.rollback()
+            prior = conn.execute(
+                "SELECT response_json FROM booking_idempotency WHERE user_id = ? AND idem_key = ?",
+                (request.user["id"], idem_key),
+            ).fetchone()
+            conn.close()
+            if prior:
+                return app.response_class(prior["response_json"], status=201, mimetype="application/json")
+            return jsonify({"error": "Could not create the booking — please try again."}), 409
+    conn.commit()
     conn.close()
 
     # Best-effort — same as create_booking's own SMS, one per booking.
@@ -2840,17 +2949,7 @@ def create_booking_cart():
                 request_id=booking_id,
             )
 
-    return jsonify({
-        "bookings": bookings_out,
-        "pricing": {
-            "subtotal": subtotal,
-            "visitFee": CART_VISIT_FEE,
-            "couponDiscount": coupon,
-            "gst": gst,
-            "coinsRedeemed": coins_redeemed,
-            "grandTotal": grand_total,
-        },
-    }), 201
+    return jsonify(response_body), 201
 
 
 @app.route("/api/technician/bookings/available", methods=["GET"])
@@ -3824,12 +3923,13 @@ def update_complaint(complaint_id):
 @require_staff_auth
 def list_technicians():
     limit, offset = _pagination_args()
+    owner_view = _owner_identity_ok()
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM technicians ORDER BY name LIMIT ? OFFSET ?", (limit, offset)
     ).fetchall()
     conn.close()
-    return jsonify([technician_row_to_dict(r, redact_documents=True) for r in rows])
+    return jsonify([technician_row_to_dict(r, redact_documents=True, redact_financial=not owner_view) for r in rows])
 
 
 # Only Firebase Storage's own download-URL hosts — see technician_document.
@@ -3861,6 +3961,8 @@ def technician_document(technician_id, kind):
     field = _DOCUMENT_PROXY_FIELD_BY_KIND.get(kind)
     if not field:
         return jsonify({"error": "kind must be one of: " + ", ".join(_DOCUMENT_PROXY_FIELD_BY_KIND)}), 400
+    if kind == "bank-passbook" and not _owner_identity_ok():
+        return jsonify({"error": "Forbidden", "message": "Bank documents are owner-only"}), 403
     conn = get_db()
     row = conn.execute("SELECT * FROM technicians WHERE id = ?", (technician_id,)).fetchone()
     conn.close()
@@ -3907,7 +4009,7 @@ def create_technician():
     conn.commit()
     row = conn.execute("SELECT * FROM technicians WHERE id = ?", (tech_id,)).fetchone()
     conn.close()
-    return jsonify(technician_row_to_dict(row, redact_documents=True)), 201
+    return jsonify(technician_row_to_dict(row, redact_documents=True, redact_financial=not _owner_identity_ok())), 201
 
 
 # Excludes 0/O and 1/I — easy to confuse when a technician reads their code
@@ -3950,11 +4052,11 @@ def verify_technician(technician_id):
     conn.commit()
     row = conn.execute("SELECT * FROM technicians WHERE id = ?", (technician_id,)).fetchone()
     conn.close()
-    return jsonify(technician_row_to_dict(row, redact_documents=True))
+    return jsonify(technician_row_to_dict(row, redact_documents=True, redact_financial=not _owner_identity_ok()))
 
 
 @app.route("/api/technicians/<technician_id>/earnings", methods=["GET"])
-@require_staff_auth
+@require_owner
 def technician_earnings_admin(technician_id):
     """Same real commission + ledger computation as the technician's own
     /api/technician/earnings, exposed to staff for reviewing a payout
@@ -5112,11 +5214,14 @@ def update_inventory_item(item_id):
 @app.route("/api/stats/overview", methods=["GET"])
 @require_staff_auth
 def stats_overview():
+    is_owner = _owner_identity_ok()
     conn = get_db()
     total_bookings = conn.execute("SELECT COUNT(*) AS n FROM bookings").fetchone()["n"]
-    revenue = conn.execute(
-        "SELECT COALESCE(SUM(price),0) AS s FROM bookings WHERE status = 'Completed'"
-    ).fetchone()["s"]
+    revenue = None
+    if is_owner:
+        revenue = conn.execute(
+            "SELECT COALESCE(SUM(price),0) AS s FROM bookings WHERE status = 'Completed'"
+        ).fetchone()["s"]
     open_complaints = conn.execute(
         "SELECT COUNT(*) AS n FROM complaints WHERE status != 'Resolved'"
     ).fetchone()["n"]
@@ -5125,13 +5230,15 @@ def stats_overview():
     ).fetchone()["n"]
     total_techs = conn.execute("SELECT COUNT(*) AS n FROM technicians").fetchone()["n"]
     conn.close()
-    return jsonify({
+    result = {
         "totalBookings": total_bookings,
-        "revenue": revenue,
         "openComplaints": open_complaints,
         "onlineTechnicians": online_techs,
         "totalTechnicians": total_techs,
-    })
+    }
+    if is_owner:
+        result["revenue"] = revenue
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------- reports
@@ -5142,6 +5249,7 @@ TECH_PAYOUT_RATE = 0.65  # assumed share of revenue paid out to technicians — 
 @app.route("/api/stats/reports", methods=["GET"])
 @require_staff_auth
 def stats_reports():
+    is_owner = _owner_identity_ok()
     period = request.args.get("period", "week")
     days = PERIOD_DAYS.get(period, 7)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds") + "Z"
@@ -5214,18 +5322,19 @@ def stats_reports():
         amount = b["total_amount"] if "total_amount" in b.keys() and b["total_amount"] is not None else b["price"]
         jobs_by_tech[b["technician_id"]] = jobs_by_tech.get(b["technician_id"], 0) + 1
         revenue_by_tech[b["technician_id"]] = revenue_by_tech.get(b["technician_id"], 0) + amount
-    leaderboard = sorted(
-        [
-            {
-                "id": t["id"],
-                "name": t["name"],
-                "jobsInPeriod": jobs_by_tech.get(t["id"], 0),
-                "revenueInPeriod": revenue_by_tech.get(t["id"], 0),
-                "rating": round(t["rating"], 1),
-            }
-            for t in technicians
-        ],
-        key=lambda x: -x["revenueInPeriod"],
+    leaderboard = []
+    for t in technicians:
+        entry = {
+            "id": t["id"],
+            "name": t["name"],
+            "jobsInPeriod": jobs_by_tech.get(t["id"], 0),
+            "rating": round(t["rating"], 1),
+        }
+        if is_owner:
+            entry["revenueInPeriod"] = revenue_by_tech.get(t["id"], 0)
+        leaderboard.append(entry)
+    leaderboard.sort(
+        key=lambda x: -(x.get("revenueInPeriod", x["jobsInPeriod"]))
     )
 
     complaint_status_breakdown = {}
@@ -5235,19 +5344,19 @@ def stats_reports():
     gross_revenue = sum(revenue_by_day.values())
     result = {
         "period": period,
-        "revenueTrend": revenue_trend,
+        "revenueTrend": revenue_trend if is_owner else [],
         "ratingTrend": rating_trend,
-        "revenueByCategory": revenue_by_category,
+        "revenueByCategory": revenue_by_category if is_owner else [],
         "technicianLeaderboard": leaderboard,
         "complaintStatusBreakdown": [
             {"status": s, "count": n} for s, n in complaint_status_breakdown.items()
         ],
-        "grossRevenue": gross_revenue,
         "completedJobs": len(completed),
-        "isOwner": request.staff["role"] == "owner",
+        "isOwner": is_owner,
         "pnl": None,
     }
-    if request.staff["role"] == "owner":
+    if is_owner:
+        result["grossRevenue"] = gross_revenue
         payout = round(gross_revenue * TECH_PAYOUT_RATE)
         result["pnl"] = {
             "grossRevenue": gross_revenue,
@@ -5263,10 +5372,9 @@ def stats_reports():
 # — init_db() itself already purges any leftover demo rows on every boot,
 # so this just re-runs that, idempotently. Kept as a manual trigger for an
 # already-running instance that hasn't restarted since the demo data was
-# removed. Staff-only: it's harmless to the data, but there's no reason to
-# let an anonymous caller repeatedly re-run DB migrations/seeding on demand.
+# removed. Owner-only: even idempotent initialization is an operational control.
 @app.route("/api/reset", methods=["POST"])
-@require_staff_auth
+@require_owner
 def reset():
     init_db()
     return jsonify({"ok": True})

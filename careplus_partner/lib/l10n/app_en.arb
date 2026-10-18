@@ -386,6 +386,10 @@
   "comingSoonTitle": "{title} is coming soon",
   "@comingSoonTitle": {"placeholders": {"title": {"type": "String"}}},
   "comingSoonBody": "We're still building this out — it'll show up here once it's ready.",
+  "visionComingSoonLabel": "Vision AI · Coming Soon",
+  "visionComingSoonBody": "Photo analysis is not available yet. Complete the checklist manually; this feature does not affect appliance scores.",
+  "googleStaffSignIn": "Sign in with Google (staff / owner)",
+  "googleStaffSignInError": "This Google account is not authorized for Partner controls.",
 
   "moreVerified": "Verified",
   "moreAwaitingReview": "Awaiting review",

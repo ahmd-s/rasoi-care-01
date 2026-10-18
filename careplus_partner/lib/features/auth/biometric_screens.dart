@@ -129,7 +129,9 @@ class _BiometricLockScreenState extends ConsumerState<BiometricLockScreen> {
         .authenticate(context.l10n.biometricLockAuthReason);
     if (!mounted) return;
     if (ok) {
-      context.go('/tech/jobs');
+      context.go(ref.read(authFlowProvider).staffRole != null
+          ? '/ops/overview'
+          : '/tech/jobs');
     } else {
       setState(() {
         _working = false;
@@ -140,6 +142,7 @@ class _BiometricLockScreenState extends ConsumerState<BiometricLockScreen> {
 
   Future<void> _signOut() async {
     await ref.read(authServiceProvider).signOut();
+    ref.read(authFlowProvider.notifier).reset();
     if (!mounted) return;
     context.go('/login');
   }

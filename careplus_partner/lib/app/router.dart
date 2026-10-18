@@ -22,6 +22,16 @@ import '../features/passport/register_appliance_screen.dart';
 import '../features/support/coming_soon_screen.dart';
 import '../features/support/language_screen.dart';
 import '../features/support/tech_help_screen.dart';
+import '../features/operations/overview_screen.dart';
+import '../features/operations/reports_screen.dart';
+import '../features/operations/bookings_screen.dart';
+import '../features/operations/team_screen.dart';
+import '../features/operations/stock_screen.dart';
+import '../features/operations/account_screen.dart';
+import '../features/operations/staff_access_screen.dart';
+import '../features/operations/operations_shell.dart';
+import '../data/operations/models.dart';
+import '../state/auth_providers.dart' show latestKnownStaffRole;
 import '../l10n/l10n_extensions.dart';
 import 'partner_shell.dart';
 
@@ -30,6 +40,18 @@ final _rootKey = GlobalKey<NavigatorState>();
 final router = GoRouter(
   navigatorKey: _rootKey,
   initialLocation: '/splash',
+  redirect: (context, state) {
+    if (state.matchedLocation.startsWith('/ops') && latestKnownStaffRole == null) {
+      return '/login';
+    }
+    if (state.matchedLocation.startsWith('/tech') && latestKnownStaffRole != null) {
+      return '/ops/overview';
+    }
+    if (state.matchedLocation == '/ops/staff' && latestKnownStaffRole != AdminRole.owner) {
+      return '/ops/overview';
+    }
+    return null;
+  },
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
     GoRoute(
@@ -44,6 +66,16 @@ final router = GoRouter(
     GoRoute(
       path: '/lock',
       builder: (_, __) => const BiometricLockScreen(),
+    ),
+    GoRoute(
+      path: '/ops/account',
+      parentNavigatorKey: _rootKey,
+      builder: (_, __) => const AccountScreen(),
+    ),
+    GoRoute(
+      path: '/ops/staff',
+      parentNavigatorKey: _rootKey,
+      builder: (_, __) => const StaffAccessScreen(),
     ),
 
     GoRoute(
@@ -186,6 +218,27 @@ final router = GoRouter(
               builder: (_, __) => const TechMoreScreen(),
             ),
           ],
+        ),
+      ],
+    ),
+    StatefulShellRoute.indexedStack(
+      parentNavigatorKey: _rootKey,
+      builder: (_, __, shell) => OperationsShell(navigationShell: shell),
+      branches: [
+        StatefulShellBranch(
+          routes: [GoRoute(path: '/ops/overview', builder: (_, __) => const OverviewScreen())],
+        ),
+        StatefulShellBranch(
+          routes: [GoRoute(path: '/ops/reports', builder: (_, __) => const ReportsScreen())],
+        ),
+        StatefulShellBranch(
+          routes: [GoRoute(path: '/ops/bookings', builder: (_, __) => const BookingsScreen())],
+        ),
+        StatefulShellBranch(
+          routes: [GoRoute(path: '/ops/team', builder: (_, __) => const TeamScreen())],
+        ),
+        StatefulShellBranch(
+          routes: [GoRoute(path: '/ops/stock', builder: (_, __) => const StockScreen())],
         ),
       ],
     ),

@@ -75,7 +75,7 @@ def test_bookings_isolated_between_customers(client):
     assert bob_bookings == []
 
 
-OWNER_PHONE = "9822000001"
+OWNER_PHONE = "9822000002"
 OWNER_PIN = "1234"
 
 

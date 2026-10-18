@@ -367,6 +367,10 @@
 
   "comingSoonTitle": "{title} जल्द आ रहा है",
   "comingSoonBody": "हम अभी इसे बना रहे हैं — तैयार होते ही यह यहां दिखने लगेगा।",
+  "visionComingSoonLabel": "विज़न AI · जल्द आ रहा है",
+  "visionComingSoonBody": "फ़ोटो विश्लेषण अभी उपलब्ध नहीं है। चेकलिस्ट स्वयं पूरी करें; इस सुविधा से उपकरण के स्कोर पर असर नहीं पड़ता।",
+  "googleStaffSignIn": "Google से साइन इन करें (स्टाफ़ / मालिक)",
+  "googleStaffSignInError": "यह Google खाता Partner नियंत्रणों के लिए अधिकृत नहीं है।",
 
   "moreVerified": "सत्यापित",
   "moreAwaitingReview": "समीक्षा बाकी है",

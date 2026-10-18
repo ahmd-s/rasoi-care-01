@@ -15,6 +15,10 @@ import 'api_config.dart';
 
 class BackendClient {
   static const _timeout = Duration(seconds: 8);
+  // Checkout writes data and the free-tier API can take ~30s to wake from a
+  // cold start, so it gets longer than the read calls; the Idempotency-Key
+  // makes a retry after a timeout safe.
+  static const _checkoutTimeout = Duration(seconds: 45);
 
   Map<String, String> _headers(String idToken) => {
         'Authorization': 'Bearer $idToken',
@@ -29,7 +33,12 @@ class BackendClient {
   /// whether the backend actually accepted it — the fire-and-forget
   /// post-sign-in call ignores this, but the phone-number path needs to
   /// tell the person it worked.
-  Future<bool> bootstrap({required String idToken, required String name, String? phone}) async {
+  Future<bool> bootstrap({
+    required String idToken,
+    required String name,
+    String? phone,
+    Duration timeout = _timeout,
+  }) async {
     try {
       final res = await http
           .post(
@@ -40,7 +49,7 @@ class BackendClient {
               if (phone != null && phone.isNotEmpty) 'phone': phone,
             }),
           )
-          .timeout(_timeout);
+          .timeout(timeout);
       return res.statusCode == 200;
     } catch (_) {
       // Best-effort — see file header.
@@ -148,12 +157,16 @@ class BackendClient {
     String? notes,
     List<String>? issues,
     DateTime? scheduledAt,
+    String? idempotencyKey,
   }) async {
     try {
       final res = await http
           .post(
             Uri.parse('${ApiConfig.baseUrl}/api/bookings/cart'),
-            headers: _headers(idToken),
+            headers: {
+              ..._headers(idToken),
+              if (idempotencyKey != null) 'Idempotency-Key': idempotencyKey,
+            },
             body: jsonEncode({
               'serviceIds': serviceIds,
               'useCoins': useCoins,
@@ -167,14 +180,31 @@ class BackendClient {
               if (scheduledAt != null) 'scheduledAt': scheduledAt.toUtc().toIso8601String(),
             }),
           )
-          .timeout(_timeout);
-      final decoded = jsonDecode(res.body);
+          .timeout(_checkoutTimeout);
+      Object? decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        decoded = null; // e.g. an HTML 502 page from the host
+      }
       if (res.statusCode == 201 && decoded is Map<String, dynamic>) {
-        final bookings = (decoded['bookings'] as List?)?.whereType<Map<String, dynamic>>().toList();
+        final bookings = (decoded['bookings'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .where((b) => (b['id'] is String) && (b['id'] as String).isNotEmpty)
+            .toList();
+        if (bookings != null && bookings.isNotEmpty) {
+          final pricing = decoded['pricing'];
+          return (
+            bookings: bookings,
+            pricing: pricing is Map<String, dynamic> ? pricing : null,
+            error: null,
+            unauthorized: false,
+          );
+        }
         return (
-          bookings: bookings,
-          pricing: decoded['pricing'] as Map<String, dynamic>?,
-          error: null,
+          bookings: null,
+          pricing: null,
+          error: 'The server did not confirm your booking. Nothing was booked — please try again.',
           unauthorized: false,
         );
       }
@@ -186,15 +216,32 @@ class BackendClient {
           unauthorized: true,
         );
       }
-      final message = decoded is Map<String, dynamic> ? decoded['error'] as String? : null;
+      final serverMessage = decoded is Map<String, dynamic> && decoded['error'] is String
+          ? decoded['error'] as String
+          : null;
+      final String friendly;
+      if (res.statusCode == 429) {
+        friendly = 'Too many attempts — please wait a moment and try again.';
+      } else if (res.statusCode >= 500 && serverMessage == null) {
+        friendly = 'Our server had a problem. Nothing was booked — please try again shortly.';
+      } else {
+        friendly = serverMessage ?? 'The server rejected this booking (${res.statusCode}).';
+      }
+      return (bookings: null, pricing: null, error: friendly, unauthorized: false);
+    } on TimeoutException {
       return (
         bookings: null,
         pricing: null,
-        error: message ?? 'The server rejected this booking (${res.statusCode}).',
+        error: 'The server is taking too long to respond. Please check your connection and tap Confirm again — you will not be booked twice.',
         unauthorized: false,
       );
     } catch (_) {
-      return (bookings: null, pricing: null, error: null, unauthorized: false);
+      return (
+        bookings: null,
+        pricing: null,
+        error: 'Could not reach the server. Please check your connection and try again.',
+        unauthorized: false,
+      );
     }
   }
 
