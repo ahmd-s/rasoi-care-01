@@ -255,3 +255,105 @@ def test_new_phone_technician_choice_creates_unverified_applicant_only(client):
     t = client.post("/api/technician/bootstrap", json={"name": "N"}, headers=auth_headers("tech-token"))
     assert t.status_code == 200 and t.get_json()["verified"] is False
     assert _staff_boot(client, "tech-token", "staff").status_code == 403
+
+
+# ---------------------------------------------------- application photo handling
+DOC_URLS = {
+    "aadharDocumentUrl": "https://example.test/o/aadhar_front.jpg",
+    "aadharDocumentBackUrl": "https://example.test/o/aadhar_back.jpg",
+    "panDocumentUrl": "https://example.test/o/pan.jpg",
+}
+
+
+def test_application_submits_without_a_profile_photo_and_profile_loads(client):
+    _apply(client)
+    h = auth_headers("tech-token")
+    body = {"name": "T", "area": "Nashik", "address": "1 Main Rd", "employmentType": "outsourced",
+            "submit": True, **DOC_URLS}
+    r = client.patch("/api/technician/me", json=body, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    me = client.get("/api/technician/me", headers=h)
+    assert me.status_code == 200
+    j = me.get_json()
+    assert j["applicationSubmitted"] is True and j["verified"] is False
+    assert not j.get("photoUrl")
+
+
+def test_firebase_storage_download_url_is_accepted_as_photo_url(client):
+    _apply(client)
+    url = ("https://firebasestorage.googleapis.com/v0/b/rasoi-care-b78ea.firebasestorage.app/o/"
+           "technician_applications%2Fuid%2Fphoto.jpg?alt=media&token=abc-123")
+    r = client.patch("/api/technician/me", json={"photoUrl": url}, headers=auth_headers("tech-token"))
+    assert r.status_code == 200
+    assert r.get_json()["photoUrl"] == url
+
+
+# ------------------------------------------- staging-only deferred documents
+SUBMIT = {"name": "T", "area": "Nashik", "address": "1 Main Rd", "employmentType": "outsourced",
+          "submit": True}
+
+
+def test_production_still_requires_identity_documents(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_TECH_DOCS_DEFERRED", False)
+    _apply(client)
+    h = auth_headers("tech-token")
+    r = client.patch("/api/technician/me", json=SUBMIT, headers=h)
+    assert r.status_code == 400
+    assert set(r.get_json()["fields"]) == {"aadharDocumentUrl", "aadharDocumentBackUrl", "panDocumentUrl"}
+    me = client.get("/api/technician/me", headers=h).get_json()
+    assert me["applicationSubmitted"] is False and me["documentsDeferred"] is False
+    # partial documents are still not enough
+    r = client.patch("/api/technician/me", json={**SUBMIT, "aadharDocumentUrl": DOC_URLS["aadharDocumentUrl"]}, headers=h)
+    assert r.status_code == 400
+    # with all three it submits, and still waits for approval
+    r = client.patch("/api/technician/me", json={**SUBMIT, **DOC_URLS}, headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["applicationSubmitted"] is True and r.get_json()["verified"] is False
+
+
+def test_staging_flag_allows_submission_without_any_images(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_TECH_DOCS_DEFERRED", True)
+    _apply(client)
+    h = auth_headers("tech-token")
+    r = client.patch("/api/technician/me", json=SUBMIT, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    j = r.get_json()
+    assert j["applicationSubmitted"] is True and j["documentsDeferred"] is True
+    # no URLs were invented
+    assert not j.get("photoUrl")
+    conn = database.get_db()
+    row = conn.execute("SELECT photo_url, aadhar_document_url, aadhar_document_back_url, pan_document_url, "
+                       "bank_passbook_url FROM technicians").fetchone()
+    conn.close()
+    assert all(not v for v in tuple(row))
+
+
+def test_deferred_application_stays_pending_and_blocked_until_owner_approves(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_TECH_DOCS_DEFERRED", True)
+    tech = _apply(client)
+    h = auth_headers("tech-token")
+    client.patch("/api/technician/me", json=SUBMIT, headers=h)
+    me = client.get("/api/technician/me", headers=h).get_json()
+    assert me["verified"] is False and me.get("online") in (False, 0, None)
+    feed = client.get("/api/technician/bookings/available", headers=h)
+    assert feed.status_code != 200 or feed.get_json() == []
+    # cannot self-approve, go online-verified, or reach owner/staff controls
+    assert client.patch(f"/api/technicians/{tech['id']}/verify", headers=h).status_code in (401, 403)
+    assert client.get("/api/staff", headers=h).status_code in (401, 403)
+    assert client.get("/api/bookings", headers=h).status_code in (401, 403)
+    assert client.post("/api/staff/bootstrap", json={}, headers=h).status_code == 403
+    # only the allowlisted owner can approve
+    assert client.patch(f"/api/technicians/{tech['id']}/verify", headers=auth_headers("gmail-token")).status_code in (401, 403)
+    _owner(client)
+    assert client.patch(f"/api/technicians/{tech['id']}/verify", headers=auth_headers("owner-token")).status_code == 200
+    assert client.get("/api/technician/me", headers=h).get_json()["verified"] is True
+
+
+def test_client_cannot_switch_the_deferred_mode_on(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_TECH_DOCS_DEFERRED", False)
+    _apply(client)
+    h = auth_headers("tech-token")
+    for body in ({**SUBMIT, "documentsDeferred": True}, {**SUBMIT, "role": "owner", "staging": True}):
+        r = client.patch("/api/technician/me", json=body, headers=h)
+        assert r.status_code == 400  # missing documents (or unknown field) — never accepted
+    assert client.get("/api/technician/me", headers=h).get_json()["applicationSubmitted"] is False

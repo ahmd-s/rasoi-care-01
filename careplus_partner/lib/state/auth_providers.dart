@@ -72,6 +72,10 @@ abstract final class SignInRoleStore {
   }
 }
 
+/// Loads the signed-in technician's record; overridable in tests.
+final technicianMeLoaderProvider =
+    Provider<Future<Map<String, dynamic>?> Function()>((ref) => fetchTechnicianMe);
+
 /// Technician bootstrap call, overridable in tests.
 final technicianBootstrapProvider =
     Provider<Future<TechnicianBootstrapResult> Function()>((ref) => bootstrapTechnicianBackendResult);
@@ -523,6 +527,8 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
       return false;
     }
     unawaited(SignInRoleStore.save(SignInRole.technician));
+    // Keep the server's view of this technician (incl. documentsDeferred).
+    if (result.json != null) ref.read(technicianMeProvider.notifier).state = result.json;
     state = state.copyWith(
         verifying: false,
         submitting: false,
@@ -574,6 +580,7 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
   void reset() {
     latestKnownStaffRole = null;
     unawaited(SignInRoleStore.save(null));
+    ref.invalidate(technicianMeProvider);
     state = const AuthFlowState();
   }
 }

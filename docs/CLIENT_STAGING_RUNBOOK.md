@@ -41,6 +41,18 @@ Confirm the staging service has:
 
 Do not copy production secrets or customer data into staging. Deploy the updated backend to the staging Render service only after the local checks below pass and the owner explicitly chooses the staging deploy step.
 
+## Staging without Firebase Storage (deferred document uploads)
+
+If Firebase Storage is unavailable for a staging test, set `TECHNICIAN_DOCUMENTS_DEFERRED=1` on the **staging** Render service only. With it, the backend lets a technician submit the application without photo/Aadhaar/PAN/passbook images, and the Partner app hides the upload controls and shows a note. No Storage calls are made and no URLs are invented; the technician stays unverified until the owner approves. Leave the variable unset for production: Aadhaar front/back and PAN images are then required by the backend as well as the app. The mode comes only from this server setting, never from the client.
+
+## Firebase Storage (required for technician document/photo uploads)
+
+The Partner app uploads application documents and the optional profile photo to Firebase Storage at `technician_applications/<uid>/<kind>.<ext>`. In project `rasoi-care-b78ea` the configured bucket is `rasoi-care-b78ea.firebasestorage.app`. If uploads fail with `storage/object-not-found` or `storage/bucket-not-found`, Storage has not been initialised:
+
+1. Firebase Console > Build > Storage > **Get started** (choose a location; start in production mode).
+2. Open the **Rules** tab and publish the rules in `docs/firebase-storage.rules` (own-folder writes only, images under 10 MB, no public access).
+3. Re-test the upload; the app now shows the failing document and the Firebase error code (for example `storage/unauthorized`).
+
 ## Build the two test APKs
 
 After the Firebase console steps are complete, build each app from its directory:

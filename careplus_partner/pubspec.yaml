@@ -81,6 +81,7 @@ flutter:
   # "<Family>-<Weight>.ttf" convention; add a file per weight the screens use.
   assets:
     - assets/google_fonts/
+    - assets/brand/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

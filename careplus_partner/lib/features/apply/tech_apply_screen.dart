@@ -26,6 +26,7 @@ import '../../core/theme/care_plus_theme.dart';
 import '../../data/auth/auth_service.dart';
 import '../../l10n/l10n_extensions.dart';
 import '../../state/auth_providers.dart';
+import 'application_uploads.dart';
 import 'aadhaar_ocr.dart';
 
 /// IFSC decodes to a bank + branch via Razorpay's free, public, no-key-
@@ -123,6 +124,8 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
   File? _passbookDocument;
   bool _agreedToTerms = false;
   bool _submitting = false;
+  late final ApplicationUploader _uploader =
+      ApplicationUploader(ref.read(technicianUploadServiceProvider));
   bool _addressAutofilled = false;
   bool _autofillingAddress = false;
   Timer? _ifscDebounce;
@@ -309,7 +312,15 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Staging-only: the backend says document/photo uploads are deferred (no
+  /// Storage). Comes from the server's technician record, never from local
+  /// config, and defaults to false (production behaviour) when unknown.
+  bool get _docsDeferred =>
+      ref.read(technicianMeProvider)?['documentsDeferred'] == true ||
+      widget.existing?['documentsDeferred'] == true;
+
   Future<void> _submit() async {
+    if (_submitting || _uploader.running) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final t = context.l10n;
     if (_categories.isEmpty) {
@@ -340,17 +351,19 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
           .showSnackBar(SnackBar(content: Text(t.applyAcceptTerms)));
       return;
     }
-    if (_aadharDocument == null && _existingAadharDocumentUrl == null) {
+    if (!_docsDeferred && _aadharDocument == null && _existingAadharDocumentUrl == null) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(t.applyUploadAadhaar)));
       return;
     }
-    if (_aadharDocumentBack == null && _existingAadharDocumentBackUrl == null) {
+    if (!_docsDeferred &&
+        _aadharDocumentBack == null &&
+        _existingAadharDocumentBackUrl == null) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(t.applyUploadAadhaarBack)));
       return;
     }
-    if (_panDocument == null && _existingPanDocumentUrl == null) {
+    if (!_docsDeferred && _panDocument == null && _existingPanDocumentUrl == null) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(t.applyUploadPan)));
       return;
@@ -362,46 +375,37 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
     }
     setState(() => _submitting = true);
     try {
-      final uploadService = ref.read(technicianUploadServiceProvider);
       // Only re-upload what was actually re-picked — omitting a key from the
       // PATCH body leaves that field (and whatever's already on file)
-      // untouched, see app.py's update_technician_me.
-      //
-      // uploadService.upload() returns null on ANY failure (network hiccup,
-      // Storage rules rejecting the write, etc.) — it used to be treated
-      // the same as "nothing was picked", so a failed upload silently
-      // vanished from the submitted application with no error at all,
-      // right after the technician had explicitly picked that exact photo.
-      // Every one of these is now a hard stop if a file was actually picked.
-      final photoUrl =
-          _photo == null ? null : await uploadService.upload(_photo!, kind: 'photo');
-      if (_photo != null && photoUrl == null) {
-        return _failUpload(t.applyUploadFailedPhoto);
+      // untouched, see app.py's update_technician_me. Identity documents are
+      // required (a failure stops here and names the failing document); the
+      // profile photo is optional (a failure only warns).
+      // When uploads are deferred (staging) nothing is sent to Storage and no
+      // URLs are invented.
+      final uploads = await _uploader.run(_docsDeferred
+          ? const PickedApplicationFiles()
+          : PickedApplicationFiles(
+              photo: _photo,
+              aadharFront: _aadharDocument,
+              aadharBack: _aadharDocumentBack,
+              pan: _panDocument,
+              passbook: _passbookDocument,
+            ));
+      if (uploads == null) return; // already uploading — ignore repeat taps
+      if (!uploads.canSubmit) {
+        return _failUpload(uploads.blocking!.userMessage);
       }
-      final aadharDocumentUrl = _aadharDocument == null
-          ? null
-          : await uploadService.upload(_aadharDocument!, kind: 'aadhar_document');
-      if (_aadharDocument != null && aadharDocumentUrl == null) {
-        return _failUpload(t.applyUploadFailedAadhaarFront);
+      if (uploads.photoWarning != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                "Your profile photo wasn't uploaded, so it's skipped for now — "
+                'you can add it later. ${uploads.photoWarning!.userMessage}')));
       }
-      final aadharDocumentBackUrl = _aadharDocumentBack == null
-          ? null
-          : await uploadService.upload(_aadharDocumentBack!, kind: 'aadhar_document_back');
-      if (_aadharDocumentBack != null && aadharDocumentBackUrl == null) {
-        return _failUpload(t.applyUploadFailedAadhaarBack);
-      }
-      final panDocumentUrl = _panDocument == null
-          ? null
-          : await uploadService.upload(_panDocument!, kind: 'pan_document');
-      if (_panDocument != null && panDocumentUrl == null) {
-        return _failUpload(t.applyUploadFailedPan);
-      }
-      final passbookUrl = _passbookDocument == null
-          ? null
-          : await uploadService.upload(_passbookDocument!, kind: 'bank_passbook');
-      if (_passbookDocument != null && passbookUrl == null) {
-        return _failUpload(t.applyUploadFailedPassbook);
-      }
+      final photoUrl = uploads.photoUrl;
+      final aadharDocumentUrl = uploads.aadharFrontUrl;
+      final aadharDocumentBackUrl = uploads.aadharBackUrl;
+      final panDocumentUrl = uploads.panUrl;
+      final passbookUrl = uploads.passbookUrl;
       final fields = {
         'name': _nameCtrl.text.trim(),
         'categories': _categories.toList(),
@@ -480,6 +484,8 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
   @override
   Widget build(BuildContext context) {
     final t = context.l10n;
+    final deferred = ref.watch(technicianMeProvider)?['documentsDeferred'] == true ||
+        widget.existing?['documentsDeferred'] == true;
     return Scaffold(
       appBar: AppBar(title: Text(_isEditing ? t.applyEditTitle : t.applyTitle)),
       body: SafeArea(
@@ -488,6 +494,18 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
           key: _formKey,
           child: Column(
             children: [
+              if (deferred)
+                Container(
+                  key: const Key('docs-deferred-note'),
+                  width: double.infinity,
+                  color: context.scheme.surfaceContainerHigh,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  child: const Text(
+                      'Staging test: photo and document uploads are turned off for now, '
+                      'so you can submit without them. Your application still needs owner '
+                      'approval before you can receive jobs.',
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                ),
               if (!_isEditing)
                 Container(
                   width: double.infinity,
@@ -506,7 +524,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                     ],
                     Center(
                       child: GestureDetector(
-                        onTap: _pickPhoto,
+                        onTap: deferred ? null : _pickPhoto,
                         child: CircleAvatar(
                           radius: 44,
                           backgroundColor: context.scheme.surfaceContainerHigh,
@@ -524,7 +542,9 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                     ),
                     const SizedBox(height: 6),
                     Center(
-                        child: Text(t.applyPhotoHint, style: context.type.bodySmall)),
+                        child: Text(
+                            deferred ? 'Profile photo — skipped for the staging test' : t.applyPhotoHint,
+                            style: context.type.bodySmall)),
                     const SizedBox(height: 22),
                     Eyebrow(t.applyNameQuestion),
                     const SizedBox(height: 8),
@@ -623,6 +643,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                         children: [
                           CareField(t.applyAadhaarNumber,
                               controller: _aadharCtrl, keyboardType: TextInputType.number),
+                          if (!deferred) ...[
                           const SizedBox(height: 13),
                           _DocPickerRow(
                             label: _aadharDocument != null
@@ -641,6 +662,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                                     : t.applyAadhaarBackUpload),
                             onTap: _pickAadharDocumentBack,
                           ),
+                          ],
                           if (_autofillingAddress) ...[
                             const SizedBox(height: 8),
                             Row(
@@ -664,6 +686,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                       child: Column(
                         children: [
                           CareField(t.applyPanNumber, controller: _panCtrl),
+                          if (!deferred) ...[
                           const SizedBox(height: 13),
                           _DocPickerRow(
                             label: _panDocument != null
@@ -673,6 +696,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                                     : t.applyPanUpload),
                             onTap: _pickPanDocument,
                           ),
+                          ],
                         ],
                       ),
                     ),
@@ -739,6 +763,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                               prefix: const Icon(Icons.alternate_email, size: 18)),
                           const SizedBox(height: 13),
                           CareField(t.applyGst, controller: _gstCtrl),
+                          if (!deferred) ...[
                           const SizedBox(height: 13),
                           _DocPickerRow(
                             label: _passbookDocument != null
@@ -748,6 +773,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
                                     : t.applyPassbookUpload),
                             onTap: _pickPassbookDocument,
                           ),
+                          ],
                         ],
                       ),
                     ),

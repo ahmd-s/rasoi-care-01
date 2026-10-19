@@ -54,3 +54,4 @@ flutter:
   # "<Family>-<Weight>.ttf" convention; add a file per weight the theme uses.
   assets:
     - assets/google_fonts/
+    - assets/brand/

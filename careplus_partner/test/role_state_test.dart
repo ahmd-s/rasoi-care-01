@@ -95,6 +95,17 @@ void main() {
       expect(techCalls, 1);
     });
 
+    test("the server's technician record (incl. documentsDeferred) is kept for the apply form", () async {
+      techResult = const TechnicianBootstrapResult(json: {
+        'applicationSubmitted': false,
+        'verified': false,
+        'documentsDeferred': true,
+      });
+      expect(await phoneLogin(SignInRole.technician), isTrue);
+      expect(c.read(technicianMeProvider)?['documentsDeferred'], true);
+      expect(st().stage, TechnicianStage.apply); // still onboarding, not jobs
+    });
+
     test('stale owner/staff role is cleared when Technician is chosen', () async {
       vm().setStaffRole(AdminRole.owner);
       expect(await phoneLogin(SignInRole.technician), isTrue);

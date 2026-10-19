@@ -21,9 +21,19 @@ class TechProfileScreen extends ConsumerStatefulWidget {
 class _TechProfileScreenState extends ConsumerState<TechProfileScreen> {
   bool _refreshing = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // The profile used to depend on the jobs screen having fetched it first;
+    // load our own data when it isn't there yet.
+    if (ref.read(technicianMeProvider) == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+    }
+  }
+
   Future<void> _refresh() async {
     setState(() => _refreshing = true);
-    final me = await fetchTechnicianMe();
+    final me = await ref.read(technicianMeLoaderProvider)();
     if (!mounted) return;
     if (me != null) ref.read(technicianMeProvider.notifier).state = me;
     setState(() => _refreshing = false);
@@ -67,7 +77,9 @@ class _TechProfileScreenState extends ConsumerState<TechProfileScreen> {
               ),
             ),
             Expanded(
-              child: me == null
+              child: me == null && _refreshing
+                  ? const Center(child: CircularProgressIndicator())
+                  : me == null
                   ? Center(
                       child: Text(
                         lastTechnicianMeStatus == null

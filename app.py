@@ -1272,6 +1272,7 @@ def technician_row_to_dict(row, *, redact_documents=False, redact_financial=Fals
         "bankPassbookUrl": row["bank_passbook_url"] if "bank_passbook_url" in keys else None,
         "address": row["address"] if "address" in keys else None,
         "upiId": row["upi_id"] if "upi_id" in keys else None,
+        "documentsDeferred": _TECH_DOCS_DEFERRED,
         "applicationSubmitted": bool(row["application_submitted"])
         if "application_submitted" in keys
         else True,
@@ -1732,6 +1733,21 @@ def staff_me():
 # Comma-separated, case-insensitive owner identity allowlist. Missing or
 # empty configuration fails closed: it never creates an owner or a staff
 # record through public Firebase bootstrap.
+# STAGING-ONLY switch (server-side; never client-supplied). When set, a
+# technician application may be submitted without the identity/bank document
+# images (Storage isn't available in that environment); the application still
+# waits for owner approval. Unset (production default) = Aadhaar front/back
+# and PAN images are required to submit.
+_TECH_DOCS_DEFERRED = (os.environ.get("TECHNICIAN_DOCUMENTS_DEFERRED") or "").strip().lower() in (
+    "1", "true", "yes",
+)
+
+_REQUIRED_APPLICATION_DOCS = (
+    ("aadhar_document_url", "aadharDocumentUrl", "Aadhaar front image"),
+    ("aadhar_document_back_url", "aadharDocumentBackUrl", "Aadhaar back image"),
+    ("pan_document_url", "panDocumentUrl", "PAN image"),
+)
+
 _STAFF_BOOTSTRAP_OWNER_EMAILS = {
     e.strip().lower()
     for e in (os.environ.get("STAFF_BOOTSTRAP_OWNER_EMAILS") or "").split(",")
@@ -4276,6 +4292,17 @@ def update_technician_me():
             (employment_type, tech["id"]),
         )
     if data.get("submit"):
+        if not _TECH_DOCS_DEFERRED:
+            current = conn.execute("SELECT * FROM technicians WHERE id = ?", (tech["id"],)).fetchone()
+            missing = {
+                key: f"{label} is required"
+                for col, key, label in _REQUIRED_APPLICATION_DOCS
+                if not (current[col] if col in current.keys() else None)
+            }
+            if missing:
+                conn.rollback()
+                conn.close()
+                return jsonify({"error": "Invalid request", "fields": missing}), 400
         conn.execute(
             "UPDATE technicians SET application_submitted = 1 WHERE id = ?", (tech["id"],)
         )

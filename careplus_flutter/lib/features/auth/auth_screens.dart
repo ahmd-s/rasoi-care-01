@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:smart_auth/smart_auth.dart';
 
+import '../../core/widgets/brand_logo.dart';
 import '../../core/widgets/care_widgets.dart';
 import '../../core/theme/care_plus_theme.dart';
 import '../../l10n/app_localizations.dart';
@@ -55,21 +56,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CareColors.pine,
+      backgroundColor: Colors.black,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CareDial(
-              value: 0.78,
-              size: 110,
-              color: CareColors.brass,
-              trackColor: const Color(0x33F6F4EF),
-              child: const Icon(Icons.add, color: CareColors.porcelain, size: 34),
-            ),
-            const SizedBox(height: 26),
-            Text('Rasoi Care', style: CareType.display(CareColors.porcelain, size: 36)),
-            const SizedBox(height: 14),
+            const BrandLogo(size: 220, rounded: false),
+            const SizedBox(height: 8),
             Text(context.l10n.authSplashTagline,
                 textAlign: TextAlign.center,
                 style: CareType.mono(CareColors.brass, size: 10)
@@ -284,13 +277,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CareDial(
-                value: 1,
-                size: 54,
-                stroke: 5,
-                showTicks: false,
-                child: Icon(Icons.add, color: context.scheme.primary, size: 22),
-              ),
+              const BrandLogo(size: 72),
               const SizedBox(height: 26),
               Text(t.authPhoneWelcomeBack, style: context.type.headlineLarge),
               const SizedBox(height: 10),

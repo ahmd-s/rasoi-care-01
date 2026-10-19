@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/care_plus_theme.dart';
+import '../../core/widgets/brand_logo.dart';
 import '../../core/widgets/care_widgets.dart';
 import '../../state/auth_providers.dart';
 
@@ -26,13 +27,7 @@ class RoleSelectScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CareDial(
-                value: 1,
-                size: 54,
-                stroke: 5,
-                showTicks: false,
-                child: Icon(Icons.build_outlined, color: context.scheme.primary, size: 22),
-              ),
+              const BrandLogo(size: 72),
               const SizedBox(height: 26),
               Text('How are you signing in?', style: context.type.headlineLarge),
               const SizedBox(height: 10),

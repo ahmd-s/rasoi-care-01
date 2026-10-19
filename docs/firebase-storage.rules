@@ -1,0 +1,43 @@
+// Proposed Firebase Storage rules for the STAGING project (rasoi-care-b78ea).
+// NOT applied by this repository — paste into Firebase Console > Storage >
+// Rules after Storage has been initialised. Do not use for production
+// without review.
+//
+// Paths come from the apps' code:
+//   Partner:  technician_applications/<uid>/<kind>.<ext>
+//             kind = photo | aadhar_document | aadhar_document_back |
+//                    pan_document | bank_passbook
+//   Customer: user_profiles/<uid>/photo.<ext>, user_profiles/<uid>/address_<id>.<ext>
+//
+// Each signed-in user can write only inside their own <uid> folder, only
+// images, under 10 MB. Reads are limited to the owner (admin review uses the
+// tokenised download URL the app stores). No public access; everything else
+// is denied.
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function owns(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function validImage() {
+      return request.resource.size < 10 * 1024 * 1024
+          && request.resource.contentType.matches('image/(jpeg|png|webp|heic|heif)');
+    }
+
+    match /technician_applications/{uid}/{file} {
+      allow read: if owns(uid);
+      allow create, update: if owns(uid) && validImage();
+      allow delete: if false;
+    }
+
+    match /user_profiles/{uid}/{file} {
+      allow read: if owns(uid);
+      allow create, update: if owns(uid) && validImage();
+      allow delete: if owns(uid);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
