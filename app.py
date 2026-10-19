@@ -1750,7 +1750,10 @@ def bootstrap_staff():
     Public Firebase sign-up never creates a staff account. Existing staff
     rows can be linked by Firebase UID, verified email, or verified phone;
     a new owner is created only for a verified email in the configured
-    allowlist. Client-requested roles are ignored.
+    allowlist. The optional ``role`` is the workspace the person chose at
+    sign-in; it never grants anything, it only has to MATCH what the backend
+    independently resolves ("owner" needs the allowlisted Google identity,
+    "staff" refuses an owner identity), otherwise 403 and nothing is written.
     """
     token = get_bearer_token()
     claims = verify_firebase_token(token) if token else None
@@ -1766,6 +1769,13 @@ def bootstrap_staff():
         _STAFF_BOOTSTRAP_OWNER_EMAILS and
         email in _STAFF_BOOTSTRAP_OWNER_EMAILS
     )
+
+    requested_role = data.get("role")
+    if requested_role == "owner" and not is_allowlisted_owner:
+        return jsonify({
+            "error": "Forbidden",
+            "message": "Owner sign-in requires the configured owner Google account",
+        }), 403
 
     conn = get_db()
     # Serialize the "is there any staff yet?" decision against concurrent
@@ -1800,6 +1810,13 @@ def bootstrap_staff():
                 row = matches[0]
 
         ts = now()
+        if requested_role == "staff" and (is_allowlisted_owner or (row and row["role"] == "owner")):
+            conn.rollback()
+            conn.close()
+            return jsonify({
+                "error": "Forbidden",
+                "message": "This is the owner account. Choose Owner to sign in.",
+            }), 403
         if row and not row["active"] and row["role"] != "owner":
             # A deactivated staff assignment grants nothing and is not
             # touched: this identity is simply "not staff" (it may still be
@@ -4074,6 +4091,29 @@ def technician_earnings_admin(technician_id):
 # ------------------------------------------------ technician self-service
 # (the Partner app's own login/session — everything above this is the
 # admin-managed view that technician.html and the Admin app already use.)
+def _identity_is_staff_or_owner(conn, claims):
+    """True when this verified identity is an active staff/owner (by uid,
+    verified email, verified phone, or the owner allowlist). Used so that
+    choosing "Technician" at sign-in cannot mint a technician profile for a
+    staff/owner-only identity. Read-only."""
+    email = (claims.get("email") or "").strip().lower()
+    verified_email = bool(email and claims.get("email_verified"))
+    if (verified_email and claims.get("sign_in_provider") == "google.com"
+            and email in _STAFF_BOOTSTRAP_OWNER_EMAILS):
+        return True
+    if conn.execute("SELECT 1 FROM staff WHERE firebase_uid = ? AND active = 1", (claims["uid"],)).fetchone():
+        return True
+    if verified_email and conn.execute(
+            "SELECT 1 FROM staff WHERE LOWER(email) = ? AND active = 1", (email,)).fetchone():
+        return True
+    digits = re.sub(r"\D", "", str(claims.get("phone_number") or ""))
+    if 10 <= len(digits) <= 15:
+        for cand in conn.execute("SELECT phone FROM staff WHERE phone IS NOT NULL AND active = 1").fetchall():
+            if re.sub(r"\D", "", str(cand["phone"] or ""))[-10:] == digits[-10:]:
+                return True
+    return False
+
+
 @app.route("/api/technician/bootstrap", methods=["POST"])
 @validate_json({
     "name": Field(str, max_len=100),
@@ -4108,6 +4148,12 @@ def bootstrap_technician():
         )
         tech_id = row["id"]
     else:
+        if _identity_is_staff_or_owner(conn, claims):
+            conn.close()
+            return jsonify({
+                "error": "Forbidden",
+                "message": "This account is a staff or owner account and has no technician profile",
+            }), 403
         tech_id = new_uuid_id("TECH")
         conn.execute(
             "INSERT INTO technicians (id, name, category, area, verified, online, rating, "

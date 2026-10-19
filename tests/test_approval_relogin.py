@@ -179,3 +179,79 @@ def test_owner_row_cannot_be_deactivated_via_api(client):
     r = client.patch(f"/api/staff/{owner_id}", json={"active": False}, headers=auth_headers("owner-token"))
     assert r.status_code == 400
     assert client.post("/api/staff/bootstrap", json={}, headers=auth_headers("owner-token")).status_code == 200
+
+
+# ---------------------------------------------------------- explicit role choice
+def _staff_boot(client, tok, role=None):
+    body = {"role": role} if role else {}
+    return client.post("/api/staff/bootstrap", json=body, headers=auth_headers(tok))
+
+
+def test_owner_choice_needs_the_allowlisted_google_identity(client):
+    assert _staff_boot(client, "owner-token", "owner").get_json()["role"] == "owner"
+    for tok in ("tech-token", "gmail-token"):
+        assert _staff_boot(client, tok, "owner").status_code == 403
+    conn = database.get_db()
+    # nothing was created for the rejected identities
+    assert conn.execute("SELECT COUNT(*) AS n FROM staff WHERE firebase_uid IN ('tech-uid','g-uid')").fetchone()["n"] == 0
+    conn.close()
+
+
+def test_staff_choice_rejects_the_owner_identity(client):
+    r = _staff_boot(client, "owner-token", "staff")
+    assert r.status_code == 403
+    conn = database.get_db()
+    assert conn.execute("SELECT COUNT(*) AS n FROM staff WHERE role = 'owner' AND firebase_uid = 'owner-uid'").fetchone()["n"] == 0
+    conn.close()
+    # the owner choice still works afterwards
+    assert _staff_boot(client, "owner-token", "owner").get_json()["role"] == "owner"
+    assert _staff_boot(client, "owner-token", "staff").status_code == 403
+
+
+def test_staff_choice_works_for_roster_phone_and_rejects_others(client):
+    _owner(client)
+    client.post("/api/staff", json={"name": "Ops", "phone": "8668690490", "pin": "482913", "role": "staff"},
+                headers=auth_headers("owner-token"))
+    assert _staff_boot(client, "tech-token", "staff").get_json()["role"] == "staff"
+    assert _staff_boot(client, "gmail-token", "staff").status_code == 403
+
+
+def test_technician_choice_rejected_for_staff_only_and_owner_identities(client):
+    _owner(client)
+    client.post("/api/staff", json={"name": "Ops", "phone": "8668690490", "pin": "482913", "role": "staff"},
+                headers=auth_headers("owner-token"))
+    # staff-only phone has no technician record -> no profile is minted
+    r = client.post("/api/technician/bootstrap", json={"name": "T"}, headers=auth_headers("tech-token"))
+    assert r.status_code == 403
+    # the allowlisted owner cannot become a technician either
+    r = client.post("/api/technician/bootstrap", json={"name": "O"}, headers=auth_headers("owner-token"))
+    assert r.status_code == 403
+    conn = database.get_db()
+    assert conn.execute("SELECT COUNT(*) AS n FROM technicians").fetchone()["n"] == 0
+    conn.close()
+
+
+def test_identity_with_both_roles_gets_the_chosen_workspace_only(client):
+    tech = _apply(client)
+    _owner(client)
+    client.patch(f"/api/technicians/{tech['id']}/verify", headers=auth_headers("owner-token"))
+    client.post("/api/staff", json={"name": "Ops", "phone": "8668690490", "pin": "482913", "role": "staff"},
+                headers=auth_headers("owner-token"))
+    h = auth_headers("tech-token")
+    # technician workspace
+    assert client.post("/api/technician/bootstrap", json={"name": "T"}, headers=h).get_json()["id"] == tech["id"]
+    assert client.get("/api/technician/me", headers=h).status_code == 200
+    # staff workspace
+    assert _staff_boot(client, "tech-token", "staff").get_json()["role"] == "staff"
+    # each endpoint enforces only that role: staff can't use owner controls
+    assert client.get("/api/staff", headers=h).status_code in (401, 403)
+    assert client.post("/api/staff", json={"name": "x", "phone": "9000000001", "pin": "482913", "role": "staff"},
+                       headers=h).status_code in (401, 403)
+    # and never owner
+    assert _staff_boot(client, "tech-token", "owner").status_code == 403
+
+
+def test_new_phone_technician_choice_creates_unverified_applicant_only(client):
+    t = client.post("/api/technician/bootstrap", json={"name": "N"}, headers=auth_headers("tech-token"))
+    assert t.status_code == 200 and t.get_json()["verified"] is False
+    assert _staff_boot(client, "tech-token", "staff").status_code == 403

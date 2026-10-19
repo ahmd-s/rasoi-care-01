@@ -71,7 +71,10 @@ class _RasoiCarePartnerAppState extends ConsumerState<RasoiCarePartnerApp>
 
   Future<void> _maybeRelock() async {
     if (!ref.read(authServiceProvider).isSignedIn) return;
-    final staffRole = await refreshStaffRole(ref);
+    final picked = await SignInRoleStore.load();
+    final staffRole = picked == SignInRole.technician
+        ? null
+        : await refreshStaffRole(ref, selected: picked);
     if (staffRole != null) {
       if (await ref.read(biometricServiceProvider).isEnabled()) {
         router.go('/lock');

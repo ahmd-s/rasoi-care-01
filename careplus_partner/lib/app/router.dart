@@ -31,33 +31,39 @@ import '../features/operations/account_screen.dart';
 import '../features/operations/staff_access_screen.dart';
 import '../features/operations/operations_shell.dart';
 import '../data/operations/models.dart';
+import '../features/auth/role_screen.dart';
 import '../state/auth_providers.dart' show latestKnownStaffRole;
 import '../l10n/l10n_extensions.dart';
 import 'partner_shell.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
 
+/// Client-side route guard (the backend enforces the real authorization):
+/// operations routes need a resolved staff/owner role, technician routes are
+/// closed to staff/owner sessions, and Staff & Access is owner-only.
+String? partnerRedirect(String location, AdminRole? role) {
+  if (location.startsWith('/ops') && role == null) return '/login';
+  if (location.startsWith('/tech') && role != null) return '/ops/overview';
+  if (location == '/ops/staff' && role != AdminRole.owner) return '/ops/overview';
+  return null;
+}
+
 final router = GoRouter(
   navigatorKey: _rootKey,
   initialLocation: '/splash',
-  redirect: (context, state) {
-    if (state.matchedLocation.startsWith('/ops') && latestKnownStaffRole == null) {
-      return '/login';
-    }
-    if (state.matchedLocation.startsWith('/tech') && latestKnownStaffRole != null) {
-      return '/ops/overview';
-    }
-    if (state.matchedLocation == '/ops/staff' && latestKnownStaffRole != AdminRole.owner) {
-      return '/ops/overview';
-    }
-    return null;
-  },
+  redirect: (context, state) => partnerRedirect(state.matchedLocation, latestKnownStaffRole),
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
     GoRoute(
       path: '/login',
-      builder: (_, _) => const PhoneScreen(),
-      routes: [GoRoute(path: 'otp', builder: (_, _) => const OtpScreen())],
+      builder: (_, _) => const RoleSelectScreen(),
+      routes: [
+        GoRoute(
+          path: 'phone',
+          builder: (_, _) => const PhoneScreen(),
+          routes: [GoRoute(path: 'otp', builder: (_, _) => const OtpScreen())],
+        ),
+      ],
     ),
     GoRoute(
       path: '/biometric-enroll',

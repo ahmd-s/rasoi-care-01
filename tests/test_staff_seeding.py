@@ -163,7 +163,10 @@ def test_seeded_pin_owner_row_links_only_to_allowlisted_google_identity(client, 
     monkeypatch.setattr(app_module, "_STAFF_BOOTSTRAP_OWNER_EMAILS", {"real-owner@example.com"})
     mock_firebase_claims(monkeypatch, uid="owner-uid", email="real-owner@example.com",
                          email_verified=True, sign_in_provider="google.com")
-    resp = client.post("/api/staff/bootstrap", json={"role": "staff"}, headers=auth_headers("x"))
+    # A mismatched requested workspace is refused (and writes nothing)...
+    assert client.post("/api/staff/bootstrap", json={"role": "staff"}, headers=auth_headers("x")).status_code == 403
+    # ...the matching choice links the seeded owner row.
+    resp = client.post("/api/staff/bootstrap", json={"role": "owner"}, headers=auth_headers("x"))
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["role"] == "owner"
     assert resp.get_json()["id"] == "staff_owner"
@@ -171,7 +174,9 @@ def test_seeded_pin_owner_row_links_only_to_allowlisted_google_identity(client, 
 
 def test_verified_phone_only_links_an_existing_staff_invitation(client, monkeypatch):
     mock_firebase_claims(monkeypatch, uid="ops-uid", phone_number="+919822000002")
-    resp = client.post("/api/staff/bootstrap", json={"role": "owner"}, headers=auth_headers("x"))
+    # Asking for owner can never escalate a phone identity.
+    assert client.post("/api/staff/bootstrap", json={"role": "owner"}, headers=auth_headers("x")).status_code == 403
+    resp = client.post("/api/staff/bootstrap", json={"role": "staff"}, headers=auth_headers("x"))
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["role"] == "staff"
     assert resp.get_json()["id"] == "staff_ops"

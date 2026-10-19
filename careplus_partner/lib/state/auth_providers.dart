@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,6 +15,7 @@ import '../data/auth/auth_service.dart';
 import '../data/auth/firebase_auth_service.dart';
 import '../data/auth/mock_auth_service.dart';
 import '../data/firestore/technician_profile_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data/firebase/technician_upload_service.dart';
 import '../data/operations/models.dart';
 import 'providers.dart';
@@ -38,9 +40,41 @@ final staffBootstrapServiceProvider = Provider<StaffBootstrapService>(
 /// has been loaded from a verified Firebase identity.
 AdminRole? latestKnownStaffRole;
 
+/// The workspace someone explicitly picked before signing in. It never
+/// grants access: it only selects which backend bootstrap runs, and the
+/// backend must independently authorise the identity for that role.
+enum SignInRole { staff, technician, owner }
+
+/// Remembers the picked workspace so a returning session reopens the same
+/// one (an identity can hold both a staff and a technician record).
+abstract final class SignInRoleStore {
+  static const _key = 'partner_sign_in_role';
+
+  static Future<SignInRole?> load() async {
+    try {
+      final v = (await SharedPreferences.getInstance()).getString(_key);
+      for (final r in SignInRole.values) {
+        if (r.name == v) return r;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> save(SignInRole? role) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (role == null) {
+        await prefs.remove(_key);
+      } else {
+        await prefs.setString(_key, role.name);
+      }
+    } catch (_) {}
+  }
+}
+
 /// Technician bootstrap call, overridable in tests.
 final technicianBootstrapProvider =
-    Provider<Future<Map<String, dynamic>?> Function()>((ref) => bootstrapTechnicianBackend);
+    Provider<Future<TechnicianBootstrapResult> Function()>((ref) => bootstrapTechnicianBackendResult);
 
 final currentRoleProvider = Provider<AdminRole>(
   (ref) => ref.watch(authFlowProvider).staffRole ?? AdminRole.staff,
@@ -66,13 +100,25 @@ enum TechnicianStage { apply, pending, jobs }
 /// mode, or if the request fails for any reason (backend not deployed yet,
 /// timeout, network error), this returns null and callers fall back to
 /// [TechnicianStage.jobs] — the original single-step mock flow.
-Future<Map<String, dynamic>?> bootstrapTechnicianBackend() async {
-  if (Firebase.apps.isEmpty) return null; // mock mode — no backend to bootstrap
+Future<Map<String, dynamic>?> bootstrapTechnicianBackend() async =>
+    (await bootstrapTechnicianBackendResult()).json;
+
+/// [json] is the technician record; [denied] carries the backend's own
+/// refusal text when it answered 401/403 (for example a staff-only identity
+/// choosing Technician), so the screen can show a clear access error.
+class TechnicianBootstrapResult {
+  const TechnicianBootstrapResult({this.json, this.denied});
+  final Map<String, dynamic>? json;
+  final String? denied;
+}
+
+Future<TechnicianBootstrapResult> bootstrapTechnicianBackendResult() async {
+  if (Firebase.apps.isEmpty) return const TechnicianBootstrapResult(); // mock mode
   final user = FirebaseAuth.instance.currentUser;
-  if (user == null) return null;
+  if (user == null) return const TechnicianBootstrapResult();
   try {
     final token = await user.getIdToken();
-    if (token == null) return null;
+    if (token == null) return const TechnicianBootstrapResult();
     final name = (user.displayName?.trim().isNotEmpty ?? false)
         ? user.displayName!.trim()
         : (user.email?.split('@').first ?? user.phoneNumber ?? 'Technician');
@@ -86,48 +132,120 @@ Future<Map<String, dynamic>?> bootstrapTechnicianBackend() async {
           body: jsonEncode({'name': name}),
         )
         .timeout(const Duration(seconds: 8));
-    if (res.statusCode != 200) return null;
+    if (res.statusCode == 401 || res.statusCode == 403) {
+      String msg = 'This account is not authorized for Technician access.';
+      try {
+        final m = (jsonDecode(res.body) as Map)['message'];
+        if (m is String && m.isNotEmpty && m.length < 200) msg = m;
+      } catch (_) {}
+      return TechnicianBootstrapResult(denied: msg);
+    }
+    if (res.statusCode != 200) return const TechnicianBootstrapResult();
     final decoded = jsonDecode(res.body);
-    return decoded is Map<String, dynamic> ? decoded : null;
+    return TechnicianBootstrapResult(
+        json: decoded is Map<String, dynamic> ? decoded : null);
   } catch (_) {
-    return null; // Backend unreachable or not deployed yet — never blocks sign-in.
+    return const TechnicianBootstrapResult(); // unreachable — never blocks sign-in
   }
 }
 
 /// Resolves staff/owner access from the backend for a returning Firebase
 /// session. A null role means this identity must continue through technician
 /// onboarding; the client never infers a privileged role itself.
-Future<AdminRole?> refreshStaffRole(WidgetRef ref) async {
-  final result = await ref.read(staffBootstrapServiceProvider).bootstrap();
+Future<AdminRole?> refreshStaffRole(WidgetRef ref, {SignInRole? selected}) async {
+  final result = await ref
+      .read(staffBootstrapServiceProvider)
+      .bootstrap(requestedRole: _requestedRole(selected));
+  var role = result.role;
+  // The backend must resolve exactly the workspace that was picked.
+  if (!_roleMatches(selected, role)) role = null;
   // A definitive "not staff" answer must also clear any role left over from
   // an earlier session on this device; a transient error keeps what we have.
-  if (result.role != null || result.notStaff) {
-    ref.read(authFlowProvider.notifier).setStaffRole(result.role);
+  if (role != null || result.notStaff) {
+    ref.read(authFlowProvider.notifier).setStaffRole(role);
   }
-  return result.role;
+  return role;
 }
+
+String? _requestedRole(SignInRole? r) => switch (r) {
+      SignInRole.owner => 'owner',
+      SignInRole.staff => 'staff',
+      _ => null,
+    };
+
+bool _roleMatches(SignInRole? selected, AdminRole? role) => switch (selected) {
+      SignInRole.owner => role == AdminRole.owner,
+      SignInRole.staff => role == AdminRole.staff,
+      _ => true,
+    };
 
 /// Re-checks status without re-bootstrapping — used by SplashScreen for a
 /// returning technician, and by the "pending review" screen's refresh
 /// action, via the technician's own already-issued Firebase token.
-Future<Map<String, dynamic>?> fetchTechnicianMe() async {
-  if (Firebase.apps.isEmpty) return null;
-  final user = FirebaseAuth.instance.currentUser;
-  if (user == null) return null;
+Future<Map<String, dynamic>?> fetchTechnicianMe() async =>
+    (await fetchTechnicianMeResult()).json;
+
+/// Outcome of GET /api/technician/me. [status] is the HTTP status, or null
+/// when no request was made / it never completed (offline, timeout).
+class TechnicianMeResult {
+  const TechnicianMeResult({this.json, this.status});
+  final Map<String, dynamic>? json;
+  final int? status;
+
+  /// The backend actively rejected this session's token (as opposed to being
+  /// unreachable): the session is not valid for this backend.
+  bool get rejected => status == 401 || status == 403;
+}
+
+/// Pure request half of [fetchTechnicianMeResult], injectable for tests.
+/// Never logs the token or the response body; debug builds log only
+/// "technician/me -> HTTP <status>".
+Future<TechnicianMeResult> requestTechnicianMe({
+  required http.Client client,
+  required String baseUrl,
+  required String token,
+}) async {
   try {
-    final token = await user.getIdToken();
-    if (token == null) return null;
-    final res = await http
+    final res = await client
         .get(
-          Uri.parse('${ApiConfig.baseUrl}/api/technician/me'),
+          Uri.parse('$baseUrl/api/technician/me'),
           headers: {'Authorization': 'Bearer $token'},
         )
         .timeout(const Duration(seconds: 8));
-    if (res.statusCode != 200) return null;
+    if (kDebugMode) debugPrint('technician/me -> HTTP ${res.statusCode}');
+    if (res.statusCode != 200) return TechnicianMeResult(status: res.statusCode);
     final decoded = jsonDecode(res.body);
-    return decoded is Map<String, dynamic> ? decoded : null;
+    return TechnicianMeResult(
+      json: decoded is Map<String, dynamic> ? decoded : null,
+      status: res.statusCode,
+    );
   } catch (_) {
-    return null;
+    return const TechnicianMeResult();
+  }
+}
+
+/// Status of the most recent GET /api/technician/me (null = never reached
+/// the server). Shown beside the Profile load error to aid diagnosis; it
+/// holds a number only — no token, phone or body.
+int? lastTechnicianMeStatus;
+
+Future<TechnicianMeResult> fetchTechnicianMeResult() async {
+  final r = await _fetchTechnicianMeResult();
+  lastTechnicianMeStatus = r.status;
+  return r;
+}
+
+Future<TechnicianMeResult> _fetchTechnicianMeResult() async {
+  if (Firebase.apps.isEmpty) return const TechnicianMeResult();
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return const TechnicianMeResult();
+  try {
+    final token = await user.getIdToken();
+    if (token == null) return const TechnicianMeResult();
+    return requestTechnicianMe(
+        client: http.Client(), baseUrl: ApiConfig.baseUrl, token: token);
+  } catch (_) {
+    return const TechnicianMeResult();
   }
 }
 
@@ -257,6 +375,7 @@ class AuthFlowState {
     this.error,
     this.stage = TechnicianStage.jobs,
     this.staffRole,
+    this.signInRole,
   });
   final String phone;
   final String? verificationId;
@@ -270,6 +389,7 @@ class AuthFlowState {
   /// response, see [bootstrapTechnicianBackend].
   final TechnicianStage stage;
   final AdminRole? staffRole;
+  final SignInRole? signInRole;
 
   AuthFlowState copyWith({
     String? phone,
@@ -282,6 +402,7 @@ class AuthFlowState {
     TechnicianStage? stage,
     AdminRole? staffRole,
     bool clearStaffRole = false,
+    SignInRole? signInRole,
   }) =>
       AuthFlowState(
         phone: phone ?? this.phone,
@@ -292,6 +413,7 @@ class AuthFlowState {
         error: clearError ? null : (error ?? this.error),
         stage: stage ?? this.stage,
         staffRole: clearStaffRole ? null : (staffRole ?? this.staffRole),
+        signInRole: signInRole ?? this.signInRole,
       );
 }
 
@@ -325,34 +447,31 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
     }
   }
 
+  /// Records the workspace picked on the role screen. Grants nothing.
+  void selectRole(SignInRole role) {
+    _setStaffRole(null);
+    state = state.copyWith(signInRole: role, clearError: true);
+  }
+
   Future<bool> verifyOtp(String code) async {
     final vid = state.verificationId;
     if (vid == null) {
       state = state.copyWith(error: 'Request a code first.');
       return false;
     }
+    final selected = state.signInRole;
+    if (selected == SignInRole.owner) {
+      state = state.copyWith(error: 'Owner sign-in uses Google only.');
+      return false;
+    }
     state = state.copyWith(verifying: true, clearError: true);
     try {
       await ref.read(authServiceProvider).verifyOtp(verificationId: vid, smsCode: code);
       unawaited(ref.read(technicianProfileServiceProvider).touchProfile());
-      final staff = await ref.read(staffBootstrapServiceProvider).bootstrap();
-      if (staff.role != null) {
-        _setStaffRole(staff.role);
-        state = state.copyWith(verifying: false, stage: TechnicianStage.jobs);
-        return true;
+      if (selected == SignInRole.staff) {
+        return _finishStaff(SignInRole.staff, verifying: true);
       }
-      // Not (or not known to be) staff: make sure no stale role survives.
-      _setStaffRole(null);
-      final tech = await ref.read(technicianBootstrapProvider)();
-      if (tech == null && ref.read(authServiceProvider).isLive) {
-        // Fail closed: never present an unknown application status as jobs.
-        state = state.copyWith(
-            verifying: false,
-            error: 'Could not load your application status. Try again.');
-        return false;
-      }
-      state = state.copyWith(verifying: false, stage: stageFromTechnicianJson(tech));
-      return true;
+      return _finishTechnician(verifying: true);
     } on AuthException catch (e) {
       state = state.copyWith(verifying: false, error: e.message);
       return false;
@@ -362,40 +481,80 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
     }
   }
 
+  void _busy(bool verifying, {String? error}) {
+    state = verifying
+        ? state.copyWith(verifying: false, error: error)
+        : state.copyWith(submitting: false, error: error);
+  }
+
+  /// Staff/Owner workspace: the backend must resolve exactly the picked role.
+  Future<bool> _finishStaff(SignInRole picked, {required bool verifying}) async {
+    final staff = await ref
+        .read(staffBootstrapServiceProvider)
+        .bootstrap(requestedRole: _requestedRole(picked));
+    if (!_roleMatches(picked, staff.role) || staff.role == null) {
+      await ref.read(authServiceProvider).signOut();
+      _setStaffRole(null);
+      final who = picked == SignInRole.owner ? 'Owner' : 'Staff';
+      _busy(verifying,
+          error: staff.error ?? 'This account is not authorized for $who access.');
+      return false;
+    }
+    _setStaffRole(staff.role);
+    unawaited(SignInRoleStore.save(picked));
+    state = state.copyWith(
+        verifying: false, submitting: false, stage: TechnicianStage.jobs);
+    return true;
+  }
+
+  /// Technician workspace: never consults the staff roster, so an identity
+  /// that also holds a staff record still lands in the technician app.
+  Future<bool> _finishTechnician({required bool verifying}) async {
+    _setStaffRole(null);
+    final result = await ref.read(technicianBootstrapProvider)();
+    if (result.denied != null) {
+      await ref.read(authServiceProvider).signOut();
+      _busy(verifying, error: result.denied);
+      return false;
+    }
+    if (result.json == null && ref.read(authServiceProvider).isLive) {
+      // Fail closed: never present an unknown application status as jobs.
+      _busy(verifying, error: 'Could not load your application status. Try again.');
+      return false;
+    }
+    unawaited(SignInRoleStore.save(SignInRole.technician));
+    state = state.copyWith(
+        verifying: false,
+        submitting: false,
+        stage: stageFromTechnicianJson(result.json));
+    return true;
+  }
+
   Future<bool> registerWithEmail(String email, String password) => _submit(
       () => ref.read(authServiceProvider).registerWithEmail(email: email, password: password));
 
   Future<bool> signInWithEmail(String email, String password) => _submit(
       () => ref.read(authServiceProvider).signInWithEmail(email: email, password: password));
 
-  Future<bool> signInWithGoogle() => _submit(
-        () => ref.read(authServiceProvider).signInWithGoogle(),
-        staffOnly: true,
-      );
+  Future<bool> signInWithGoogle() {
+    final selected = state.signInRole;
+    if (selected == null) {
+      state = state.copyWith(error: 'Choose how you are signing in first.');
+      return Future.value(false);
+    }
+    return _submit(() => ref.read(authServiceProvider).signInWithGoogle(),
+        picked: selected);
+  }
 
-  Future<bool> _submit(Future<void> Function() action, {bool staffOnly = false}) async {
+  Future<bool> _submit(Future<void> Function() action, {SignInRole? picked}) async {
     state = state.copyWith(submitting: true, clearError: true);
     try {
       await action();
       unawaited(ref.read(technicianProfileServiceProvider).touchProfile());
-      if (staffOnly) {
-        final staff = await ref.read(staffBootstrapServiceProvider).bootstrap();
-        if (staff.role == null) {
-          await ref.read(authServiceProvider).signOut();
-          _setStaffRole(null);
-          state = state.copyWith(
-            submitting: false,
-            error: staff.error ?? 'This Google account is not authorized for Partner controls.',
-          );
-          return false;
-        }
-        _setStaffRole(staff.role);
-        state = state.copyWith(submitting: false, stage: TechnicianStage.jobs);
-        return true;
+      if (picked == SignInRole.owner || picked == SignInRole.staff) {
+        return _finishStaff(picked!, verifying: false);
       }
-      final tech = await bootstrapTechnicianBackend();
-      state = state.copyWith(submitting: false, stage: stageFromTechnicianJson(tech));
-      return true;
+      return _finishTechnician(verifying: false);
     } on AuthException catch (e) {
       state = state.copyWith(submitting: false, error: e.message);
       return false;
@@ -414,6 +573,7 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
 
   void reset() {
     latestKnownStaffRole = null;
+    unawaited(SignInRoleStore.save(null));
     state = const AuthFlowState();
   }
 }

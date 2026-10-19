@@ -27,17 +27,43 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         if (mounted) context.go('/login');
         return;
       }
-      final staffRole = await refreshStaffRole(ref);
+      // Reopen the workspace that was explicitly picked at sign-in. Staff and
+      // Owner sessions must re-resolve to exactly that role; they never fall
+      // back to the technician app.
+      final picked = await SignInRoleStore.load();
       if (!mounted) return;
-      if (staffRole != null) {
-        context.go('/ops/overview');
+      if (picked == SignInRole.staff || picked == SignInRole.owner) {
+        final restored = await refreshStaffRole(ref, selected: picked);
+        if (!mounted) return;
+        context.go(restored != null ? '/ops/overview' : '/login');
         return;
+      }
+      if (picked == SignInRole.technician) {
+        ref.read(authFlowProvider.notifier).setStaffRole(null);
+      } else {
+        // Session from before role selection existed.
+        final staffRole = await refreshStaffRole(ref);
+        if (!mounted) return;
+        if (staffRole != null) {
+          context.go('/ops/overview');
+          return;
+        }
       }
       // Already signed in from a previous session — find out where they
       // actually belong (still applying, awaiting verification, or fully
       // onboarded) instead of always dropping them at the job feed.
-      final tech = await fetchTechnicianMe();
+      final result = await fetchTechnicianMeResult();
       if (!mounted) return;
+      if (result.rejected) {
+        // The backend refused this session's token (wrong environment or an
+        // expired/invalid session) — don't present a technician experience
+        // that can't load anything; start over from sign-in.
+        await ref.read(authServiceProvider).signOut();
+        ref.read(authFlowProvider.notifier).reset();
+        if (mounted) context.go('/login');
+        return;
+      }
+      final tech = result.json;
       final stage = stageFromTechnicianJson(tech);
       // A returning, already-verified session with biometric login turned
       // on gets locked behind a fingerprint/face check instead of dropping
@@ -119,7 +145,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
     final ok = await ref.read(authFlowProvider.notifier).sendOtp(digits);
     if (!mounted) return;
     if (ok) {
-      context.push('/login/otp');
+      context.push('/login/phone/otp');
     } else {
       final err = ref.read(authFlowProvider).error ?? t.phoneErrorGeneric;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
@@ -130,7 +156,11 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
     final ok = await ref.read(authFlowProvider.notifier).signInWithGoogle();
     if (!mounted) return;
     if (ok) {
-      context.go('/ops/overview');
+      if (ref.read(authFlowProvider).signInRole == SignInRole.technician) {
+        routeToStage(context, ref, ref.read(authFlowProvider).stage);
+      } else {
+        context.go('/ops/overview');
+      }
       return;
     }
     final error = ref.read(authFlowProvider).error ?? context.l10n.googleStaffSignInError;
@@ -139,6 +169,15 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final role = ref.watch(authFlowProvider.select((s) => s.signInRole));
+    if (role == null) {
+      // Arrived without choosing a role (for example a stale deep link).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go('/login');
+      });
+      return const Scaffold(body: SizedBox.shrink());
+    }
+    final isOwner = role == SignInRole.owner;
     final sending = ref.watch(authFlowProvider.select((s) => s.sending));
     final submitting = ref.watch(authFlowProvider.select((s) => s.submitting));
     final t = context.l10n;
@@ -157,12 +196,19 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
                 child: Icon(Icons.build_outlined, color: context.scheme.primary, size: 22),
               ),
               const SizedBox(height: 26),
-              Text(_creatingAccount ? t.phoneTitleCreate : t.phoneTitleSignIn,
+              Text(
+                  isOwner
+                      ? 'Owner sign-in'
+                      : (_creatingAccount ? t.phoneTitleCreate : t.phoneTitleSignIn),
                   style: context.type.headlineLarge),
               const SizedBox(height: 10),
-              Text(_creatingAccount ? t.phoneBodyCreate : t.phoneBodySignIn,
+              Text(
+                  isOwner
+                      ? 'Owners sign in with the configured Google account only.'
+                      : (_creatingAccount ? t.phoneBodyCreate : t.phoneBodySignIn),
                   style: context.type.bodyMedium),
               const SizedBox(height: 30),
+              if (!isOwner) ...[
               Row(
                 children: [
                   CareCard(
@@ -191,6 +237,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
                 ),
               ),
               const SizedBox(height: 10),
+              ],
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -203,6 +250,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
                 ),
               ),
               const SizedBox(height: 18),
+              if (role == SignInRole.technician)
               Center(
                 child: GestureDetector(
                   onTap: () => setState(() => _creatingAccount = !_creatingAccount),

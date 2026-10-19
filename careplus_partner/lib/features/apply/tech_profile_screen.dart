@@ -70,7 +70,9 @@ class _TechProfileScreenState extends ConsumerState<TechProfileScreen> {
               child: me == null
                   ? Center(
                       child: Text(
-                        t.profileLoadError,
+                        lastTechnicianMeStatus == null
+                            ? t.profileLoadError
+                            : '${t.profileLoadError} (HTTP $lastTechnicianMeStatus)',
                         style: context.type.bodyMedium,
                       ),
                     )

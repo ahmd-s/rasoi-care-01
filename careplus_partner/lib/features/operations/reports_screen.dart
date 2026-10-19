@@ -91,17 +91,14 @@ class _ReportsBody extends StatelessWidget {
           const EmptyState(glyph: '✓', title: 'No complaints', body: 'None filed this period.')
         else
           _ComplaintsCard(report: report),
-        SectionHeader('Financial P&L',
-            trailing: role == AdminRole.owner
-                ? null
-                : const StatusChip('Owner only', tone: ChipTone.neutral, height: 24)),
-        if (role != AdminRole.owner)
-          const _OwnerOnlyLock()
-        else if (report.financials == null)
-          const EmptyState(
-              glyph: '◌', title: 'Loading…', body: 'Fetching the owner P&L summary.')
-        else
-          _FinancialsCard(financials: report.financials!),
+        if (role == AdminRole.owner) ...[
+          const SectionHeader('Financial P&L'),
+          if (report.financials == null)
+            const EmptyState(
+                glyph: '◌', title: 'Loading…', body: 'Fetching the owner P&L summary.')
+          else
+            _FinancialsCard(financials: report.financials!),
+        ],
       ],
     );
   }
@@ -402,22 +399,4 @@ class _FinancialsCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _OwnerOnlyLock extends StatelessWidget {
-  const _OwnerOnlyLock();
-  @override
-  Widget build(BuildContext context) => CareCard(
-        color: context.scheme.surfaceContainerHigh,
-        borderColor: Colors.transparent,
-        child: Row(children: [
-          Icon(Icons.lock_outline, size: 20, color: context.care.inkFaint),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-                'Payouts and margin are visible to the Owner account only.',
-                style: context.type.bodySmall),
-          ),
-        ]),
-      );
 }

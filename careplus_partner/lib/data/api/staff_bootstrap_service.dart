@@ -18,7 +18,7 @@ class StaffBootstrapService {
   StaffBootstrapService({http.Client? client}) : _client = client ?? http.Client();
   final http.Client _client;
 
-  Future<StaffBootstrapResult> bootstrap() async {
+  Future<StaffBootstrapResult> bootstrap({String? requestedRole}) async {
     if (Firebase.apps.isEmpty) return const StaffBootstrapResult(notStaff: true);
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const StaffBootstrapResult(notStaff: true);
@@ -32,7 +32,10 @@ class StaffBootstrapService {
               'Authorization': 'Bearer $token',
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({'name': user.displayName ?? user.email ?? user.phoneNumber ?? 'Staff'}),
+            body: jsonEncode({
+              'name': user.displayName ?? user.email ?? user.phoneNumber ?? 'Staff',
+              if (requestedRole != null) 'role': requestedRole,
+            }),
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
@@ -42,7 +45,12 @@ class StaffBootstrapService {
         );
       }
       if (response.statusCode == 403 || response.statusCode == 401) {
-        return const StaffBootstrapResult(notStaff: true);
+        String? message;
+        try {
+          final m = (jsonDecode(response.body) as Map)['message'];
+          if (m is String && m.isNotEmpty && m.length < 200) message = m;
+        } catch (_) {}
+        return StaffBootstrapResult(notStaff: true, error: message);
       }
       return const StaffBootstrapResult(error: 'Could not verify Partner access. Try again.');
     } catch (_) {
