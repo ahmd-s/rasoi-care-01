@@ -2346,7 +2346,14 @@ def redeem_coins():
 @app.route("/api/health", methods=["GET"])
 @rate_limit_public
 def health():
-    return jsonify({"ok": True, "service": "rasoicare-backend"})
+    # Non-secret deployment facts so a tester can confirm which build and
+    # mode a service is running (RENDER_GIT_COMMIT is set by Render itself).
+    return jsonify({
+        "ok": True,
+        "service": "rasoicare-backend",
+        "commit": (os.environ.get("RENDER_GIT_COMMIT") or "")[:7] or None,
+        "technicianDocumentsDeferred": _TECH_DOCS_DEFERRED,
+    })
 
 
 # ---------------------------------------------------------------- appliances

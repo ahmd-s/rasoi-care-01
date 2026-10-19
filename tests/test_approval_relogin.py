@@ -357,3 +357,24 @@ def test_client_cannot_switch_the_deferred_mode_on(client, monkeypatch):
         r = client.patch("/api/technician/me", json=body, headers=h)
         assert r.status_code == 400  # missing documents (or unknown field) — never accepted
     assert client.get("/api/technician/me", headers=h).get_json()["applicationSubmitted"] is False
+
+
+def test_health_reports_deploy_mode_without_secrets(client, monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "b949ab8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    for flag in (True, False):
+        monkeypatch.setattr(app_module, "_TECH_DOCS_DEFERRED", flag)
+        j = client.get("/api/health").get_json()
+        assert j["ok"] is True
+        assert j["technicianDocumentsDeferred"] is flag
+        assert j["commit"] == "b949ab8"
+        assert set(j) == {"ok", "service", "commit", "technicianDocumentsDeferred"}
+
+
+def test_fresh_technician_records_always_carry_the_server_mode(client, monkeypatch):
+    # bootstrap (fresh login) and /me (refresh) both reflect the CURRENT server setting
+    for flag in (True, False):
+        monkeypatch.setattr(app_module, "_TECH_DOCS_DEFERRED", flag)
+        b = client.post("/api/technician/bootstrap", json={"name": "T"}, headers=auth_headers("tech-token")).get_json()
+        assert b["documentsDeferred"] is flag
+        me = client.get("/api/technician/me", headers=auth_headers("tech-token")).get_json()
+        assert me["documentsDeferred"] is flag

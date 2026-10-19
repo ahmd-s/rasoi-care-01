@@ -72,6 +72,12 @@ abstract final class SignInRoleStore {
   }
 }
 
+/// True when this build talks to the production API. Staging/test builds use
+/// it only to pick a clearer UI (never for authorization — the backend
+/// decides everything).
+final isProductionApiProvider =
+    Provider<bool>((ref) => ApiConfig.baseUrl == ApiConfig.productionUrl);
+
 /// Loads the signed-in technician's record; overridable in tests.
 final technicianMeLoaderProvider =
     Provider<Future<Map<String, dynamic>?> Function()>((ref) => fetchTechnicianMe);

@@ -137,10 +137,23 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadMode());
     _bankIfscCtrl.addListener(_onIfscChanged);
     if (_ifscFormatRe.hasMatch(_bankIfscCtrl.text.trim().toUpperCase())) {
       _lookupIfsc(_bankIfscCtrl.text.trim().toUpperCase());
     }
+  }
+
+  _Mode _mode = _Mode.loading;
+
+  /// Always re-reads the technician record from the server (never trusts a
+  /// cached copy for the document-upload mode).
+  Future<void> _loadMode() async {
+    setState(() => _mode = _Mode.loading);
+    final me = await ref.read(technicianMeLoaderProvider)();
+    if (!mounted) return;
+    if (me != null) ref.read(technicianMeProvider.notifier).state = me;
+    setState(() => _mode = me == null ? _Mode.failed : _Mode.ready);
   }
 
   void _onIfscChanged() {
@@ -315,9 +328,7 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
   /// Staging-only: the backend says document/photo uploads are deferred (no
   /// Storage). Comes from the server's technician record, never from local
   /// config, and defaults to false (production behaviour) when unknown.
-  bool get _docsDeferred =>
-      ref.read(technicianMeProvider)?['documentsDeferred'] == true ||
-      widget.existing?['documentsDeferred'] == true;
+  bool get _docsDeferred => ref.read(technicianMeProvider)?['documentsDeferred'] == true;
 
   Future<void> _submit() async {
     if (_submitting || _uploader.running) return;
@@ -483,9 +494,43 @@ class _TechApplyScreenState extends ConsumerState<TechApplyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The upload/no-upload mode is decided by the SERVER, so never draw the
+    // form from cached or stale state: wait for a fresh technician record.
+    if (_mode == _Mode.loading) {
+      return Scaffold(
+        appBar: AppBar(title: Text(_isEditing ? context.l10n.applyEditTitle : context.l10n.applyTitle)),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    final serverDeferred = ref.watch(technicianMeProvider)?['documentsDeferred'] == true;
+    if (_mode == _Mode.failed) {
+      return _ModeProblem(
+        key: const Key('mode-load-failed'),
+        title: "Couldn't load your application settings",
+        body: 'Check your connection and try again. The form is not shown until '
+            'the server confirms how documents are handled.',
+        onRetry: _loadMode,
+      );
+    }
+    if (!serverDeferred && !ref.watch(isProductionApiProvider)) {
+      // A staging/test server that still wants production documents is a
+      // misconfiguration — say so instead of showing the production form.
+      return _ModeProblem(
+        key: const Key('staging-misconfigured'),
+        title: 'Staging configuration error',
+        body: 'This test server is not set up to defer document uploads '
+            '(TECHNICIAN_DOCUMENTS_DEFERRED is not enabled, or the server has not '
+            'been updated). Ask the administrator to enable it on the staging '
+            'service and try again. No upload form is shown.',
+        onRetry: _loadMode,
+      );
+    }
+    return _buildForm(context);
+  }
+
+  Widget _buildForm(BuildContext context) {
     final t = context.l10n;
-    final deferred = ref.watch(technicianMeProvider)?['documentsDeferred'] == true ||
-        widget.existing?['documentsDeferred'] == true;
+    final deferred = ref.watch(technicianMeProvider)?['documentsDeferred'] == true;
     return Scaffold(
       appBar: AppBar(title: Text(_isEditing ? t.applyEditTitle : t.applyTitle)),
       body: SafeArea(
@@ -933,3 +978,32 @@ class _DocPickerRow extends StatelessWidget {
       );
 }
 
+
+enum _Mode { loading, ready, failed }
+
+class _ModeProblem extends StatelessWidget {
+  const _ModeProblem({super.key, required this.title, required this.body, required this.onRetry});
+  final String title;
+  final String body;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text(context.l10n.applyTitle)),
+        body: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.settings_suggest_outlined, size: 44, color: context.scheme.error),
+              const SizedBox(height: 16),
+              Text(title, style: context.type.titleMedium, textAlign: TextAlign.center),
+              const SizedBox(height: 10),
+              Text(body, style: context.type.bodyMedium, textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              FilledButton(onPressed: onRetry, child: const Text('Retry')),
+            ],
+          ),
+        ),
+      );
+}
