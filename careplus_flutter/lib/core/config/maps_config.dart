@@ -6,11 +6,8 @@
 //
 // To configure Google Maps:
 //
-//   1. Get a Google Maps API key from the Google Cloud console and enable the
-//      following APIs on the project:
-//      - Maps SDK for Android
-//      - Places API
-//      - Geocoding API
+//   1. Get an Android-restricted Google Maps API key and enable Maps SDK for
+//      Android. Places API (New) and Geocoding are called through the backend.
 //
 //   2. Add the key to `android/local.properties` (already gitignored —
 //      create the file if it doesn't exist):
@@ -22,9 +19,11 @@
 //      `com.google.android.geo.API_KEY` meta-data tag, defaulting to an empty
 //      string so the app never crashes from a missing manifest entry.
 //
-//   3. Build with the API key passed as a dart-define for the app's direct
-//      Places/Geocoding HTTP calls (the manifest entry only covers the native
-//      GoogleMap widget itself):
+//   3. Build with the same restricted Android key passed as a dart-define so
+//      the app can gate map UI (the native GoogleMap widget reads the
+//      manifest entry). Places and Geocoding requests run through authenticated
+//      backend proxies; their server key belongs in MAPS_SERVER_API_KEY on the
+//      backend and must never be shipped in the APK.
 //
 //        flutter run --dart-define=MAPS_API_KEY=your-key-here
 //        flutter build apk --release --dart-define=MAPS_API_KEY=your-key-here
@@ -34,7 +33,8 @@
 //
 // Owner-side configuration still required:
 // - Set up Google Cloud project with billing enabled
-// - Enable required APIs (Maps SDK for Android, Places API, Geocoding API)
+// - Enable Maps SDK for Android in the app's project
+// - Store a separate server-side Places/Geocoding key in backend env
 // - Configure API key restrictions (Android package name, SHA-1 fingerprint)
 // - Set up proper API quotas and monitoring
 abstract final class MapsConfig {
@@ -42,8 +42,7 @@ abstract final class MapsConfig {
   /// Gates every real-map/live-location UI element vs. static placeholders.
   static const isConfigured = apiKey != '';
 
-  /// The raw API key for Places Autocomplete and Geocoding REST API calls.
-  /// The native GoogleMap widget reads its key from the Android manifest instead.
-  /// Empty until passed at build time; every call site checks [isConfigured] first.
+  /// Android-restricted Maps SDK key, also used as a non-secret build-time
+  /// switch. Places and Geocoding use the authenticated backend proxy.
   static const apiKey = String.fromEnvironment('MAPS_API_KEY', defaultValue: '');
 }

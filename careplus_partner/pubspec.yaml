@@ -41,7 +41,7 @@ dependencies:
   firebase_auth: ^5.3.4        # phone/email/Google sign-in, guarded fallback to mock if unconfigured
   google_sign_in: ^6.2.2       # Google auth provider — see lib/data/auth/firebase_auth_service.dart
   cloud_firestore: ^5.6.0      # technician profile write-through on sign-in
-  geolocator: ^13.0.2          # live GPS -> technician_locations while on duty + active job
+  geolocator: ^13.0.2          # live GPS -> authenticated backend during active jobs
   firebase_storage: ^12.4.10
   image_picker: ^1.2.3
   google_mlkit_text_recognition: ^0.15.0  # on-device OCR: best-effort address autofill from the Aadhaar back photo

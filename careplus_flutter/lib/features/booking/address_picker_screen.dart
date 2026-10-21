@@ -8,9 +8,8 @@
 //     Maps key exists.
 //   - configured: a draggable GoogleMap ("pan the map to place the pin"), a
 //     Places Autocomplete search bar, and a "use my current location"
-//     button — all via direct HTTP calls (google_maps_flutter's the only
-//     Maps *package* dependency; Places/Geocoding are called the same way
-//     BackendClient calls the Flask backend, see the file header there).
+//     button — native map rendering plus authenticated backend requests for
+//     Places Autocomplete and Geocoding. The web-service key stays on server.
 //
 // Either way, confirming pops the screen with a [SavedAddress] the caller
 // (AddressScreen) hands to BookingDraftVM.setPickedAddress.
@@ -21,6 +20,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:go_router/go_router.dart';
@@ -30,6 +30,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/config/maps_config.dart';
 import '../../core/theme/care_plus_theme.dart';
 import '../../core/widgets/care_widgets.dart';
+import '../../data/api/api_config.dart';
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
 import '../../l10n/l10n_extensions.dart';
@@ -39,37 +40,38 @@ import '../../state/firestore_providers.dart';
 /// _MapPickerBody's own resolving (as someone pans the map) and
 /// SelectLocationScreen's "Use Current Location" fast path (which skips
 /// the map entirely). Falls back to a bare lat/lng string on any failure.
+Future<Map<String, dynamic>?> _mapsRequest(
+  String endpoint,
+  Map<String, String> query,
+) async {
+  try {
+    final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (token == null) return null;
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/maps/$endpoint')
+        .replace(queryParameters: query);
+    final response = await http.get(uri, headers: {
+      'Authorization': 'Bearer $token',
+    }).timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) return null;
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<String> resolveAreaLine(double lat, double lng) async {
   try {
-    final uri = Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
-      'latlng': '$lat,$lng',
-      'key': MapsConfig.apiKey,
+    final decoded = await _mapsRequest('geocode', {
+      'lat': '$lat',
+      'lng': '$lng',
     });
-    final res = await http.get(uri).timeout(const Duration(seconds: 8));
-    if (res.statusCode == 200) {
-      final decoded = jsonDecode(res.body);
-      if (decoded is Map<String, dynamic>) {
-        final results = decoded['results'];
-        if (results is List && results.isNotEmpty) {
-          final first = results.first;
-          if (first is Map<String, dynamic>) {
-            final formatted = first['formatted_address'] as String?;
-            if (formatted != null) return formatted;
-          }
-        }
-        // Google's Geocoding API always answers 200 even on a rejected key
-        // or a billing/quota problem — the real outcome is this `status`
-        // field (REQUEST_DENIED, OVER_QUERY_LIMIT, ...), which an empty
-        // `results` list alone can't tell apart from a genuine "no address
-        // here". Logged, not shown to the customer — they just see the
-        // bare lat/lng fallback below either way — but this is the one
-        // place that would otherwise make a misconfigured/restricted API
-        // key look identical to "this spot has no address on file".
-        final status = decoded['status'] as String?;
-        if (status != null && status != 'OK') {
-          debugPrint('resolveAreaLine: Geocoding API returned $status '
-              '(${decoded['error_message']})');
-        }
+    final results = decoded?['results'];
+    if (results is List && results.isNotEmpty) {
+      final first = results.first;
+      if (first is Map<String, dynamic>) {
+        final formatted = first['formatted_address'] as String?;
+        if (formatted != null) return formatted;
       }
     }
   } catch (_) {
@@ -455,48 +457,23 @@ class _MapPickerBodyState extends State<_MapPickerBody> {
     }
     _debounce = Timer(const Duration(milliseconds: 350), () async {
       try {
-        final uri = Uri.https('maps.googleapis.com', '/maps/api/place/autocomplete/json', {
-          'input': query,
-          'key': MapsConfig.apiKey,
-        });
-        final res = await http.get(uri).timeout(_timeout);
-        if (res.statusCode == 200) {
-          final decoded = jsonDecode(res.body);
-          if (decoded is Map<String, dynamic>) {
-            final predictions = decoded['predictions'];
-            // Google's Autocomplete API always answers 200 — even when the
-            // key is rejected or over quota — so `status` (not the HTTP
-            // code) is the only way to tell a real failure apart from a
-            // genuine "nothing matches yet". Surfaced here rather than
-            // just falling through to an empty, unexplained dropdown.
-            final status = decoded['status'] as String?;
-            if (status != null && status != 'OK' && status != 'ZERO_RESULTS') {
-              debugPrint('AddressPickerScreen._search: Places API returned '
-                  '$status (${decoded['error_message']})');
-              if (mounted) {
-                setState(() {
-                  _suggestions = [];
-                  _searchError = context.l10n.mapPickerSearchError;
-                });
-              }
-              return;
-            }
-            if (predictions is List) {
-              final parsed = predictions
-                  .whereType<Map<String, dynamic>>()
-                  .map(_PlaceSuggestion.fromJson)
-                  .whereType<_PlaceSuggestion>()
-                  .toList();
-              if (mounted) {
-                setState(() {
-                  _suggestions = parsed;
-                  _searchError = null;
-                });
-              }
-              return;
-            }
+        final decoded = await _mapsRequest('autocomplete', {'input': query});
+        final predictions = decoded?['predictions'];
+        if (predictions is List) {
+          final parsed = predictions
+              .whereType<Map<String, dynamic>>()
+              .map(_PlaceSuggestion.fromJson)
+              .whereType<_PlaceSuggestion>()
+              .toList();
+          if (mounted) {
+            setState(() {
+              _suggestions = parsed;
+              _searchError = null;
+            });
           }
+          return;
         }
+        if (mounted) setState(() => _searchError = context.l10n.mapPickerSearchError);
       } catch (_) {
         // Best-effort — an empty suggestion list just means no dropdown.
       }
@@ -510,36 +487,21 @@ class _MapPickerBodyState extends State<_MapPickerBody> {
       _searchController.text = s.description;
     });
     try {
-      final uri = Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
-        'place_id': s.placeId,
-        'key': MapsConfig.apiKey,
-      });
-      final res = await http.get(uri).timeout(_timeout);
-      if (res.statusCode == 200) {
-        final decoded = jsonDecode(res.body);
-        if (decoded is Map<String, dynamic>) {
-          final results = decoded['results'];
-          if (results is List && results.isNotEmpty) {
-            final first = results.first as Map<String, dynamic>;
-            final loc = first['geometry']?['location'];
-            if (loc is Map<String, dynamic>) {
-              final lat = (loc['lat'] as num?)?.toDouble();
-              final lng = (loc['lng'] as num?)?.toDouble();
-              if (lat != null && lng != null) {
-                final point = LatLng(lat, lng);
-                setState(() {
-                  _center = point;
-                  _resolvedLine = first['formatted_address'] as String? ?? s.description;
-                });
-                await _mapController?.animateCamera(CameraUpdate.newLatLng(point));
-                return;
-              }
-            }
-          }
-          final status = decoded['status'] as String?;
-          if (status != null && status != 'OK') {
-            debugPrint('AddressPickerScreen._selectSuggestion: Geocoding API '
-                'returned $status (${decoded['error_message']})');
+      final decoded = await _mapsRequest('geocode', {'placeId': s.placeId});
+      final results = decoded?['results'];
+      if (results is List && results.isNotEmpty) {
+        final first = results.first;
+        if (first is Map<String, dynamic>) {
+          final lat = (first['lat'] as num?)?.toDouble();
+          final lng = (first['lng'] as num?)?.toDouble();
+          if (lat != null && lng != null) {
+            final point = LatLng(lat, lng);
+            setState(() {
+              _center = point;
+              _resolvedLine = first['formatted_address'] as String? ?? s.description;
+            });
+            await _mapController?.animateCamera(CameraUpdate.newLatLng(point));
+            return;
           }
         }
       }

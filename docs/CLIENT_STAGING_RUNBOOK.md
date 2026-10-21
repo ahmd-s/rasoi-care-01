@@ -41,6 +41,22 @@ Confirm the staging service has:
 
 Do not copy production secrets or customer data into staging. Deploy the updated backend to the staging Render service only after the local checks below pass and the owner explicitly chooses the staging deploy step.
 
+## Staging Google Maps and live technician tracking
+
+The current tracking path uses authenticated backend endpoints, not client-readable Firestore location documents. The Partner app sends GPS only while approved, on duty, and assigned an active job. The backend returns a fresh position only to the owner of that active booking; positions older than 90 seconds are hidden. Customer and Partner apps still need a restricted Android Maps SDK key to render maps.
+
+For project `rasoi-care-b78ea`:
+
+1. In Google Cloud Console, link a billing account to the project. Maps is usage-priced; there is no required fixed monthly subscription. Check the current India pricing and set usage alerts.
+2. Enable **Maps SDK for Android**, **Places API (New)**, and **Geocoding API**.
+3. Create separate Android keys for Customer (`com.careplus.care_plus`) and Partner (`com.rasoicare.care_plus_partner`). Restrict each to its package + the signing certificate SHA-1 used for that APK, and to **Maps SDK for Android**.
+4. Create a separate server key restricted to **Places API (New)** and **Geocoding API**. Store it only as `MAPS_SERVER_API_KEY` in the staging Render service. The Customer app calls authenticated backend proxies; do not pass this server key to Flutter, put it in `local.properties`, or commit it.
+5. Add each app's Android Maps SDK key to that app's ignored `android/local.properties` as `MAPS_API_KEY=...`. Build with the same Android key passed as the `MAPS_API_KEY` dart define, plus `API_BASE_URL=https://rasoi-care-01.onrender.com`.
+6. Deploy the backend change to staging, then install both APKs. On the Partner test phone, allow location **while using the app** and notifications. Sharing runs as a foreground service with a visible notification, started while the app is open. The app starts location sharing only during an approved, on-duty active job and shows a persistent notification while sharing.
+7. Test a synthetic booking through assignment, technician movement, and customer tracking. Check that a different customer and a completed booking receive no location.
+
+The Google Cloud billing link, API enablement, key restrictions, Render secret, and device permission prompts must be completed by a project/service owner. Never paste API keys into chat.
+
 ## Staging without Firebase Storage (deferred document uploads)
 
 If Firebase Storage is unavailable for a staging test, set `TECHNICIAN_DOCUMENTS_DEFERRED=1` on the **staging** Render service only. With it, the backend lets a technician submit the application without photo/Aadhaar/PAN/passbook images, and the Partner app hides the upload controls and shows a note. No Storage calls are made and no URLs are invented; the technician stays unverified until the owner approves. Leave the variable unset for production: Aadhaar front/back and PAN images are then required by the backend as well as the app. The mode comes only from this server setting, never from the client.
@@ -60,13 +76,13 @@ After the Firebase console steps are complete, build each app from its directory
 ```bash
 cd careplus_flutter
 flutter pub get
-flutter build apk --release --dart-define=API_BASE_URL=https://rasoi-care-01.onrender.com
+flutter build apk --release --dart-define=API_BASE_URL=https://rasoi-care-01.onrender.com --dart-define=MAPS_API_KEY=YOUR_CUSTOMER_ANDROID_MAPS_KEY
 ```
 
 ```bash
 cd careplus_partner
 flutter pub get
-flutter build apk --release --dart-define=API_BASE_URL=https://rasoi-care-01.onrender.com
+flutter build apk --release --dart-define=API_BASE_URL=https://rasoi-care-01.onrender.com --dart-define=MAPS_API_KEY=YOUR_PARTNER_ANDROID_MAPS_KEY
 ```
 
 The output is `build/app/outputs/flutter-apk/app-release.apk` in each app folder. Do not distribute the `careplus_admin` APK.

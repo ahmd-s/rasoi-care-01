@@ -168,6 +168,11 @@
   "trackingTechAssignedStep": "तकनीशियन असाइन किया गया",
   "trackingMarkerTechnician": "आपका तकनीशियन",
   "trackingMarkerAddress": "आपका पता",
+  "trackingLocationLive": "तकनीशियन की लोकेशन लाइव है",
+  "trackingWaitingForLocation": "तकनीशियन की लोकेशन का इंतज़ार है",
+  "trackingLocationStale": "तकनीशियन की लोकेशन पुरानी हो सकती है",
+  "trackingLocationNotActive": "काम पूरा होने पर लाइव ट्रैकिंग बंद हो जाती है",
+  "trackingMapSetupRequired": "लाइव मैप सेटअप अभी पूरा नहीं हुआ है",
 
   "shopTitle": "Rasoi Care शॉप",
   "shopIntro": "आपके उपकरणों के लिए पहले से मापी गई, एक बार इस्तेमाल होने वाली सफाई किट — वही उत्पाद जो हमारे तकनीशियन साथ रखते हैं। इन्हें अपनी कार्ट में जोड़ें और ये आपकी बुक की गई किसी भी सेवा के साथ बिल किए जाएंगे।",

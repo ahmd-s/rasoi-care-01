@@ -186,6 +186,11 @@
   "trackingTechAssignedStep": "Technician assigned",
   "trackingMarkerTechnician": "Your technician",
   "trackingMarkerAddress": "Your address",
+  "trackingLocationLive": "Technician location is live",
+  "trackingWaitingForLocation": "Waiting for the technician's location",
+  "trackingLocationStale": "Technician location may be out of date",
+  "trackingLocationNotActive": "Live tracking ends when the job is complete",
+  "trackingMapSetupRequired": "Live map setup is not complete yet",
 
   "shopTitle": "Rasoi Care Shop",
   "shopIntro": "Pre-measured, one-time-use cleaning kits for your appliances — the same products our technicians carry. Add them to your cart and they're billed together with any service you book.",

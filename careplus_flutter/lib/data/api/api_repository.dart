@@ -350,9 +350,6 @@ class ApiRepository implements CareRepository {
       // tracking screen's live map without a second fetch. See
       // TechnicianLocationService.
       technicianId: json['technicianId'] as String?,
-      // Firestore key for live location — NOT the same as technicianId
-      // above, see Booking.technicianFirebaseUid's doc comment.
-      technicianFirebaseUid: json['technicianFirebaseUid'] as String?,
       lat: (json['lat'] as num?)?.toDouble(),
       lng: (json['lng'] as num?)?.toDouble(),
       suctionBefore: (json['suctionBefore'] as num?)?.toInt(),

@@ -1,62 +1,56 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+// Best-effort authenticated GPS write-through to the backend. The backend
+// verifies the technician identity, approval, on-duty state and active job;
+// customer reads are scoped to their own booking.
+
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:http/http.dart' as http;
 
-/// Best-effort GPS write-through to Firestore while a technician is en route
-/// to or working a job, so the Customer app's tracking screen can show them
-/// live on a map — see `technician_location_reporter.dart` for when this
-/// gets called.
-///
-/// Document shape is a fixed contract with the Customer app (do not change
-/// without updating that side too):
-///   technician_locations/{technician's Firebase Auth uid}
-///     { lat: double, lng: double, updatedAt: server timestamp }
-///
-/// In mock mode (no Firebase project configured yet) or if the write fails
-/// for any reason, this is a silent no-op — same rule as
-/// [TechnicianProfileService.touchProfile]: background telemetry must never
-/// block or crash the app.
+import '../api/api_config.dart';
+
 class TechnicianLocationService {
-  Future<void> pushLocation({required double lat, required double lng}) async {
-    if (Firebase.apps.isEmpty) return; // mock mode — nothing to write to
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
+  static const _timeout = Duration(seconds: 8);
+
+  /// Returns false when the backend says this technician is no longer
+  /// eligible to share (403 not approved/on duty, 409 no active job), so the
+  /// caller can stop the location stream. Any other outcome returns true.
+  Future<bool> pushLocation({required double lat, required double lng}) async {
+    if (Firebase.apps.isEmpty) return true;
     try {
-      await FirebaseFirestore.instance
-          .collection('technician_locations')
-          .doc(uid)
-          .set({
-            'lat': lat,
-            'lng': lng,
-            'updatedAt': FieldValue.serverTimestamp(),
-          })
-          .timeout(const Duration(seconds: 8));
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return true;
+      final response = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/technician/location'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'lat': lat, 'lng': lng}),
+          )
+          .timeout(_timeout);
+      return response.statusCode != 403 && response.statusCode != 409;
     } catch (_) {
-      // Best-effort — a Firestore hiccup (or a hang, e.g. no Firestore
-      // database created yet) shouldn't affect the technician's workflow.
-      // The timeout above turns a silent hang into a catchable error here.
+      // A missed location update must never block the technician's job flow.
+      return true;
     }
   }
 
-  /// Removes this technician's live-location document once there's no
-  /// active job left to track (see [TechnicianLocationReporter._stop]) —
-  /// without this the last real fix sat in Firestore indefinitely, so
-  /// whether a customer could keep reading a stale "live" location after
-  /// their job ended came down entirely to Firestore security rules
-  /// rather than anything this app itself guaranteed. Same best-effort
-  /// rule as [pushLocation] — a failed delete never blocks the workflow.
   Future<void> clearLocation() async {
     if (Firebase.apps.isEmpty) return;
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
     try {
-      await FirebaseFirestore.instance
-          .collection('technician_locations')
-          .doc(uid)
-          .delete()
-          .timeout(const Duration(seconds: 8));
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return;
+      await http
+          .delete(
+            Uri.parse('${ApiConfig.baseUrl}/api/technician/location'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(_timeout);
     } catch (_) {
-      // Best-effort — see pushLocation's own catch.
+      // Best-effort cleanup; the backend also withholds locations after 90s.
     }
   }
 }

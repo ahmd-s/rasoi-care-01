@@ -78,6 +78,16 @@ CREATE TABLE IF NOT EXISTS technicians (
     application_submitted INTEGER NOT NULL DEFAULT 0
 );
 
+-- At most one current position per technician. Customer reads are always
+-- authorized through their own active booking in app.py; raw location data
+-- is never exposed from a public or client-writable Firestore collection.
+CREATE TABLE IF NOT EXISTS technician_live_locations (
+    technician_id TEXT PRIMARY KEY REFERENCES technicians(id) ON DELETE CASCADE,
+    lat           REAL NOT NULL,
+    lng           REAL NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bookings (
     id              TEXT PRIMARY KEY,
     category        TEXT NOT NULL,

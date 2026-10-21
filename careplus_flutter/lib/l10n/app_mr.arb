@@ -168,6 +168,11 @@
   "trackingTechAssignedStep": "तंत्रज्ञ नेमला",
   "trackingMarkerTechnician": "तुमचा तंत्रज्ञ",
   "trackingMarkerAddress": "तुमचा पत्ता",
+  "trackingLocationLive": "तंत्रज्ञाचे लोकेशन थेट दिसत आहे",
+  "trackingWaitingForLocation": "तंत्रज्ञाच्या लोकेशनची प्रतीक्षा आहे",
+  "trackingLocationStale": "तंत्रज्ञाचे लोकेशन जुने असू शकते",
+  "trackingLocationNotActive": "काम पूर्ण झाल्यावर थेट ट्रॅकिंग थांबते",
+  "trackingMapSetupRequired": "थेट नकाशाची मांडणी अजून पूर्ण झालेली नाही",
 
   "shopTitle": "Rasoi Care शॉप",
   "shopIntro": "तुमच्या उपकरणांसाठी आधीच मोजलेल्या, एकदा वापरण्याच्या स्वच्छता किट — तेच उत्पादन जे आमचे तंत्रज्ञ सोबत ठेवतात. त्या तुमच्या कार्टमध्ये जोडा आणि त्या तुम्ही बुक केलेल्या कोणत्याही सेवेसोबत बिल केल्या जातील.",

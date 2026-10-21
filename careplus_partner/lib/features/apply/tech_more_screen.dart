@@ -14,6 +14,7 @@ import '../../core/widgets/care_widgets.dart';
 import '../../l10n/l10n_extensions.dart';
 import '../../state/auth_providers.dart';
 import '../../state/providers.dart';
+import '../../state/technician_location_reporter.dart';
 import 'legal_document_screen.dart';
 
 class TechMoreScreen extends ConsumerStatefulWidget {
@@ -195,6 +196,11 @@ class _TechMoreScreenState extends ConsumerState<TechMoreScreen> {
                     width: double.infinity,
                     child: TextButton(
                       onPressed: () async {
+                        // Stop sharing + delete the stored fix while the
+                        // token is still valid.
+                        await ref
+                            .read(technicianLocationReporterProvider.notifier)
+                            .stopAndClear();
                         await ref.read(authServiceProvider).signOut();
                         ref.read(authFlowProvider.notifier).reset();
                         // Without this, a second technician signing in on

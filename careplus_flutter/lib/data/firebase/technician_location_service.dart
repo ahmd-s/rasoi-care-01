@@ -1,22 +1,16 @@
-// Live technician GPS, read-only from the Customer app's side. The Partner
-// (technician) app writes documents in exactly this shape — field names
-// must match exactly for this to work:
-//
-//   technician_locations/{technicianId}
-//     lat: double
-//     lng: double
-//     updatedAt: Firestore server timestamp
-//
-// Guarded the same way as UserProfileService
-// (lib/data/firebase/firestore_user_profile_service.dart): a no-op / empty
-// stream in mock mode (no Firebase project configured), and any failure —
-// missing doc, permission error, offline — degrades to "no live location"
-// rather than throwing. The tracking screen falls back to its static
-// placeholder whenever this has nothing to show, gated by
-// MapsConfig.isConfigured — see lib/core/config/maps_config.dart.
+// Customer-side live location reads go through the authenticated backend.
+// The booking endpoint verifies ownership and active status before returning
+// coordinates, so customer apps never need direct Firestore read access to a
+// technician's location.
 
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:http/http.dart' as http;
+
+import '../api/api_config.dart';
 
 class TechnicianLocation {
   const TechnicianLocation({required this.lat, required this.lng, this.updatedAt});
@@ -26,32 +20,50 @@ class TechnicianLocation {
 }
 
 class TechnicianLocationService {
-  /// Emits the technician's latest known position, or null when there's
-  /// nothing to show (Firebase unconfigured, no doc yet, malformed data,
-  /// or a stream error). Never throws.
-  Stream<TechnicianLocation?> watchLocation(String technicianId) {
-    if (Firebase.apps.isEmpty) return Stream.value(null); // mock mode
+  static const _requestTimeout = Duration(seconds: 8);
+  static const _pollInterval = Duration(seconds: 5);
+
+  /// Polls an authenticated booking-scoped endpoint. The backend returns a
+  /// position only to that booking's customer and only while the job is
+  /// active; a missing/stale fix is emitted as null.
+  Stream<TechnicianLocation?> watchLocation(String bookingId) async* {
+    if (Firebase.apps.isEmpty) {
+      yield null;
+      return;
+    }
+    while (true) {
+      yield await _fetch(bookingId);
+      await Future<void>.delayed(_pollInterval);
+    }
+  }
+
+  Future<TechnicianLocation?> _fetch(String bookingId) async {
     try {
-      return FirebaseFirestore.instance
-          .collection('technician_locations')
-          .doc(technicianId)
-          .snapshots()
-          .map<TechnicianLocation?>((snap) {
-            final data = snap.data();
-            if (data == null) return null;
-            final lat = (data['lat'] as num?)?.toDouble();
-            final lng = (data['lng'] as num?)?.toDouble();
-            if (lat == null || lng == null) return null;
-            final ts = data['updatedAt'];
-            return TechnicianLocation(
-              lat: lat,
-              lng: lng,
-              updatedAt: ts is Timestamp ? ts.toDate() : null,
-            );
-          })
-          .handleError((_) {}); // swallow — see file header
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (token == null) return null;
+      final response = await http
+          .get(
+            Uri.parse(
+              '${ApiConfig.baseUrl}/api/bookings/${Uri.encodeComponent(bookingId)}/live-location',
+            ),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(_requestTimeout);
+      if (response.statusCode != 200) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final location = decoded['location'];
+      if (location is! Map<String, dynamic>) return null;
+      final lat = (location['lat'] as num?)?.toDouble();
+      final lng = (location['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null) return null;
+      return TechnicianLocation(
+        lat: lat,
+        lng: lng,
+        updatedAt: DateTime.tryParse('${location['updatedAt'] ?? ''}'),
+      );
     } catch (_) {
-      return Stream.value(null);
+      return null;
     }
   }
 }

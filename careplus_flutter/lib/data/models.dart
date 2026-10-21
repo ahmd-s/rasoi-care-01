@@ -276,7 +276,6 @@ class Booking {
     this.technician,
     this.stars,
     this.technicianId,
-    this.technicianFirebaseUid,
     this.lat,
     this.lng,
     this.suctionBefore,
@@ -308,15 +307,6 @@ class Booking {
   /// enough to look up their live location. See TechnicianLocationService
   /// in lib/data/firebase/technician_location_service.dart.
   final String? technicianId;
-
-  /// The assigned technician's Firebase Auth uid — NOT the same value as
-  /// [technicianId] above (that's the backend's own `technicians.id`
-  /// primary key). This is the id the Partner app actually keys its live
-  /// Firestore location document by (`technician_locations/{firebaseUid}`),
-  /// so live tracking must watch this one, not [technicianId]. Null for
-  /// mock/demo bookings, or a real booking assigned to a seed technician
-  /// that's never bootstrapped through the Partner app.
-  final String? technicianFirebaseUid;
 
   /// The service address's coordinates, when known — set from the
   /// backend's `lat`/`lng` fields on bookings created through the real map

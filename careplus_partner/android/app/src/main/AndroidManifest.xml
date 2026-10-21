@@ -11,6 +11,13 @@
          map — see lib/state/technician_location_reporter.dart. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- No ACCESS_BACKGROUND_LOCATION: sharing runs as a visible location
+         foreground service (geolocator's foregroundNotificationConfig) that
+         is started while the app is open during an approved, on-duty,
+         active job, so "while using the app" permission is enough and the
+         service stops when the job ends. -->
     <!-- Android 13+ (API 33+) requires this permission for foreground location access -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Don't block install on devices without a location radio — reporting

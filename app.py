@@ -10,6 +10,7 @@ separate devices.
 import os
 import base64
 import json
+import math
 import re
 import secrets
 import sys
@@ -1106,9 +1107,6 @@ def booking_row_to_dict(
         "service": row["service"],
         "price": row["price"],
         "technicianId": row["technician_id"],
-        "technicianFirebaseUid": row["technician_firebase_uid"]
-        if "technician_firebase_uid" in keys
-        else None,
         "customerName": row["customer_name"],
         "status": row["status"],
         "bachatSlot": row["bachat_slot"],
@@ -1420,6 +1418,7 @@ def get_bearer_token():
 # backend-issued JWTs the web apps use) are tried first everywhere, so
 # nothing about the web apps' auth changes.
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "rasoi-care")
+MAPS_SERVER_API_KEY = (os.environ.get("MAPS_SERVER_API_KEY") or "").strip()
 _GOOGLE_CERTS_URL = (
     "https://www.googleapis.com/robot/v1/metadata/x509/"
     "securetoken@system.gserviceaccount.com"
@@ -1554,6 +1553,123 @@ def require_auth(fn):
         request.user = row
         return fn(*args, **kwargs)
     return wrapper
+
+
+def _maps_server_get(path, params):
+    """Call a Google Maps web service with a key held only by the backend.
+    The client-facing endpoints below authenticate Firebase users and return
+    only the small response shape the address picker needs."""
+    if not MAPS_SERVER_API_KEY:
+        return None
+    query = dict(params)
+    query["key"] = MAPS_SERVER_API_KEY
+    url = "https://maps.googleapis.com/maps/api/" + path + "?" + urllib.parse.urlencode(query)
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            if response.status != 200:
+                return None
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        return None
+
+
+def _places_server_post(payload):
+    if not MAPS_SERVER_API_KEY:
+        return None
+    req = urllib.request.Request(
+        "https://places.googleapis.com/v1/places:autocomplete",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-Goog-Api-Key": MAPS_SERVER_API_KEY,
+            "X-Goog-FieldMask": (
+                "suggestions.placePrediction.placeId,"
+                "suggestions.placePrediction.text.text"
+            ),
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            if response.status != 200:
+                return None
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        return None
+
+
+@app.route("/api/maps/autocomplete", methods=["GET"])
+@require_auth
+def maps_autocomplete():
+    if _rate_limited(f"maps:{request.user['id']}", 30, 60):
+        return jsonify({"error": "Too many map searches; please wait and try again"}), 429
+    query = (request.args.get("input") or "").strip()
+    if len(query) < 3 or len(query) > 120:
+        return jsonify({"error": "Search text must be between 3 and 120 characters"}), 400
+    if not MAPS_SERVER_API_KEY:
+        return jsonify({"error": "Maps search is not configured"}), 503
+    result = _places_server_post({"input": query, "includedRegionCodes": ["in"]})
+    if not result:
+        return jsonify({"error": "Maps search is temporarily unavailable"}), 502
+    suggestions = result.get("suggestions") if isinstance(result.get("suggestions"), list) else []
+    predictions = []
+    for suggestion in suggestions:
+        place = suggestion.get("placePrediction") if isinstance(suggestion, dict) else None
+        text = place.get("text") if isinstance(place, dict) else None
+        description = text.get("text") if isinstance(text, dict) else None
+        place_id = place.get("placeId") if isinstance(place, dict) else None
+        if isinstance(description, str) and isinstance(place_id, str):
+            predictions.append({"description": description, "place_id": place_id})
+    return jsonify({
+        "predictions": predictions
+    })
+
+
+@app.route("/api/maps/geocode", methods=["GET"])
+@require_auth
+def maps_geocode():
+    if _rate_limited(f"maps:{request.user['id']}", 30, 60):
+        return jsonify({"error": "Too many map lookups; please wait and try again"}), 429
+    place_id = (request.args.get("placeId") or "").strip()
+    lat_raw, lng_raw = request.args.get("lat"), request.args.get("lng")
+    params = {}
+    if place_id:
+        if len(place_id) > 200:
+            return jsonify({"error": "Invalid place id"}), 400
+        params["place_id"] = place_id
+    elif lat_raw is not None and lng_raw is not None:
+        try:
+            lat, lng = float(lat_raw), float(lng_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Valid latitude and longitude are required"}), 400
+        if (not math.isfinite(lat) or not math.isfinite(lng) or
+                not -90 <= lat <= 90 or not -180 <= lng <= 180):
+            return jsonify({"error": "Valid latitude and longitude are required"}), 400
+        params["latlng"] = f"{lat},{lng}"
+    else:
+        return jsonify({"error": "Provide a place id or coordinates"}), 400
+    if not MAPS_SERVER_API_KEY:
+        return jsonify({"error": "Maps search is not configured"}), 503
+    result = _maps_server_get("geocode/json", params)
+    if not result:
+        return jsonify({"error": "Address lookup is temporarily unavailable"}), 502
+    status = result.get("status")
+    if status not in {"OK", "ZERO_RESULTS"}:
+        return jsonify({"error": "Address lookup is temporarily unavailable", "status": status}), 502
+    rows = result.get("results") if isinstance(result.get("results"), list) else []
+    simplified = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        geometry = row.get("geometry") if isinstance(row.get("geometry"), dict) else {}
+        location = geometry.get("location") if isinstance(geometry.get("location"), dict) else {}
+        lat, lng = location.get("lat"), location.get("lng")
+        address = row.get("formatted_address")
+        if isinstance(address, str) and isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            simplified.append({"formatted_address": address, "lat": lat, "lng": lng})
+    return jsonify({"results": simplified})
 
 
 def generate_staff_token(staff_id):
@@ -2594,6 +2710,54 @@ def get_booking(booking_id):
     return jsonify(booking_row_to_dict(
         row, include_start_code=bool(user), parts=parts, service_changes=service_changes,
     ))
+
+
+@app.route("/api/bookings/<booking_id>/live-location", methods=["GET"])
+@require_auth
+def booking_live_location(booking_id):
+    """Return a technician's fresh position only to the customer who owns
+    this active booking. Location rows are never directly readable from a
+    client database; completed/cancelled bookings and other customers get no
+    position."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT bookings.status, bookings.technician_id, "
+        "technicians.verified AS tech_verified, technicians.online AS tech_online, "
+        "technician_live_locations.lat, technician_live_locations.lng, "
+        "technician_live_locations.updated_at "
+        "FROM bookings LEFT JOIN technician_live_locations "
+        "ON technician_live_locations.technician_id = bookings.technician_id "
+        "LEFT JOIN technicians ON technicians.id = bookings.technician_id "
+        "WHERE bookings.id = ? AND bookings.user_id = ?",
+        (booking_id, request.user["id"]),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+
+    # Active job AND a technician who is still approved and on duty.
+    active = (
+        row["status"] in {"Accepted", "On the way", "In Progress"}
+        and bool(row["tech_verified"])
+        and bool(row["tech_online"])
+    )
+    updated_at = row["updated_at"] if active else None
+    if updated_at:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z")
+        if updated_at < cutoff:
+            updated_at = None
+    conn.close()
+    if not active or not row["technician_id"] or not updated_at:
+        return jsonify({"location": None})
+    return jsonify({
+        "location": {
+            "lat": row["lat"],
+            "lng": row["lng"],
+            "updatedAt": updated_at,
+        }
+    })
 
 
 # httpSMS (https://httpsms.com) turns a real Android phone with a SIM into
@@ -4357,6 +4521,68 @@ def technician_my_bookings():
         )
         for r in rows
     ])
+
+
+@app.route("/api/technician/location", methods=["POST"])
+@require_technician_auth
+def update_technician_live_location():
+    """Store the authenticated technician's latest GPS fix only while an
+    approved, on-duty technician has an active assigned booking."""
+    data = request.get_json(force=True, silent=True) or {}
+    lat, lng = data.get("lat"), data.get("lng")
+    if (isinstance(lat, bool) or not isinstance(lat, (int, float)) or
+            not -90 <= lat <= 90 or isinstance(lng, bool) or
+            not isinstance(lng, (int, float)) or not -180 <= lng <= 180):
+        return jsonify({"error": "Valid latitude and longitude are required"}), 400
+    conn = get_db()
+    if not request.technician["verified"] or not request.technician["online"]:
+        # No longer eligible: drop any previously stored fix, not just refuse.
+        conn.execute(
+            "DELETE FROM technician_live_locations WHERE technician_id = ?",
+            (request.technician["id"],),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"error": "Live location is only accepted while approved and on duty"}), 403
+
+    active = conn.execute(
+        "SELECT 1 FROM bookings WHERE technician_id = ? "
+        "AND status IN ('Accepted', 'On the way', 'In Progress') LIMIT 1",
+        (request.technician["id"],),
+    ).fetchone()
+    if not active:
+        conn.execute(
+            "DELETE FROM technician_live_locations WHERE technician_id = ?",
+            (request.technician["id"],),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"error": "No active assigned booking"}), 409
+
+    updated_at = now()
+    conn.execute(
+        "INSERT INTO technician_live_locations (technician_id, lat, lng, updated_at) "
+        "VALUES (?,?,?,?) ON CONFLICT (technician_id) DO UPDATE SET "
+        "lat = excluded.lat, lng = excluded.lng, updated_at = excluded.updated_at",
+        (request.technician["id"], float(lat), float(lng), updated_at),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "updatedAt": updated_at})
+
+
+@app.route("/api/technician/location", methods=["DELETE"])
+@require_technician_auth
+def clear_technician_live_location():
+    """Remove the current GPS fix when the Partner app stops tracking."""
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM technician_live_locations WHERE technician_id = ?",
+        (request.technician["id"],),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/technician/bookings/<booking_id>/appliance", methods=["PATCH"])
