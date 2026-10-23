@@ -82,7 +82,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Widget build(BuildContext context) {
     final t = context.l10n;
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFFFBF7ED),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -90,12 +90,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             const BrandLogo(size: 220, rounded: false),
             const SizedBox(height: 8),
             Text(t.splashPartnerBadge,
-                style: CareType.mono(CareColors.brass, size: 13)
+                style: CareType.mono(CareColors.pine, size: 13)
                     .copyWith(letterSpacing: 4, fontWeight: FontWeight.w600)),
             const SizedBox(height: 20),
             Text(t.splashTagline,
                 textAlign: TextAlign.center,
-                style: CareType.mono(CareColors.porcelain.withValues(alpha: 0.6), size: 10)
+                style: CareType.mono(CareColors.pine.withValues(alpha: 0.78), size: 10)
                     .copyWith(letterSpacing: 2.2, height: 1.6)),
           ],
         ),
@@ -234,22 +234,37 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
                       ? const SizedBox(width: 16, height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.account_circle_outlined),
-                  label: Text(t.googleStaffSignIn),
+                  label: Text(role == SignInRole.technician
+                      ? 'Continue with Google'
+                      : t.googleStaffSignIn),
                 ),
               ),
               const SizedBox(height: 18),
-              if (role == SignInRole.technician)
-              Center(
-                child: GestureDetector(
-                  onTap: () => setState(() => _creatingAccount = !_creatingAccount),
-                  child: Text(
-                      _creatingAccount ? t.phoneToggleToSignIn : t.phoneToggleToCreate,
-                      style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                          color: context.scheme.primary)),
+              if (role == SignInRole.technician) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => context.push('/login/email'),
+                    child: const Text('Continue with email'),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 18),
+                Center(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _creatingAccount = !_creatingAccount),
+                    child: Text(
+                      _creatingAccount
+                          ? t.phoneToggleToSignIn
+                          : t.phoneToggleToCreate,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: context.scheme.primary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

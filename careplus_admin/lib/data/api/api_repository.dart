@@ -123,7 +123,7 @@ class ApiRepository extends ChangeNotifier implements AdminRepository {
     final allBookings = bookings.cast<Map<String, dynamic>>();
     final allTechnicians = technicians.cast<Map<String, dynamic>>();
     final scopedBookings =
-        district == null ? allBookings : allBookings.where((b) => b['area'] == district).toList();
+        district == null ? allBookings : allBookings.where((b) => b['city'] == district).toList();
     final scopedTechnicians = district == null
         ? allTechnicians
         : allTechnicians.where((t) => t['area'] == district).toList();
@@ -158,7 +158,7 @@ class ApiRepository extends ChangeNotifier implements AdminRepository {
               .fold<int>(0, (sum, b) => sum + _asInt(b['total_amount'] ?? b['price'])) *
           100;
       final bookingAreaById = {
-        for (final b in allBookings) b['id'] as String?: b['area'] as String?,
+        for (final b in allBookings) b['id'] as String?: b['city'] as String?,
       };
       openComplaints = (_complaintsRaw?.cast<Map<String, dynamic>>() ?? const [])
           .where((c) => c['status'] != 'Resolved')
@@ -189,7 +189,7 @@ class ApiRepository extends ChangeNotifier implements AdminRepository {
     final byDay = <String, int>{};
     for (final b in _bookingsRaw?.cast<Map<String, dynamic>>() ?? const []) {
       if (b['status'] != 'Completed') continue;
-      if (district != null && b['area'] != district) continue;
+      if (district != null && b['city'] != district) continue;
       final updatedAt = b['updatedAt'] as String?;
       final dt = updatedAt == null ? null : DateTime.tryParse(updatedAt);
       if (dt == null) continue;
@@ -217,16 +217,19 @@ class ApiRepository extends ChangeNotifier implements AdminRepository {
     final items = <AttentionItem>[];
     final bookingAreaById = {
       for (final b in _bookingsRaw?.cast<Map<String, dynamic>>() ?? const [])
-        b['id'] as String?: b['area'] as String?,
+        b['id'] as String?: b['city'] as String?,
     };
     for (final b in _bookingsRaw?.cast<Map<String, dynamic>>() ?? const []) {
       if (b['status'] != 'Requested') continue;
       final area = (b['area'] as String?)?.trim();
-      if (district != null && area != district) continue;
+      final city = (b['city'] as String?)?.trim();
+      if (district != null && city != district) continue;
+      final detail = [if (city?.isNotEmpty == true) city!, if (area?.isNotEmpty == true) area!]
+          .join(' · ');
       items.add(AttentionItem(
         jobId: (b['id'] as String?) ?? '—',
         title: 'Unassigned · ${(b['service'] as String?) ?? 'Service'}',
-        detail: area?.isNotEmpty == true ? area! : 'No area on file',
+        detail: detail.isNotEmpty ? detail : 'No area on file',
         tone: LineTone.neutral,
       ));
       if (items.length >= 4) break;
@@ -295,6 +298,7 @@ class ApiRepository extends ChangeNotifier implements AdminRepository {
       totalPaise: _asInt(b['total_amount'] ?? b['price']) * 100,
       createdAt: DateTime.tryParse((b['createdAt'] as String?) ?? ''),
       area: area?.isNotEmpty == true ? area : null,
+      city: (b['city'] as String?)?.trim(),
       customerName: customerName?.isNotEmpty == true ? customerName : null,
       directions: directions?.isNotEmpty == true ? directions : null,
       technicianName: technicianId == null ? null : techNames[technicianId],

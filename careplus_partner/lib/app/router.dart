@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/auth_screens.dart';
+import '../features/auth/partner_email_auth_screen.dart';
 import '../features/auth/biometric_screens.dart';
 import '../features/apply/tech_apply_screen.dart';
 import '../features/apply/tech_financial_screen.dart';
@@ -62,6 +63,14 @@ final router = GoRouter(
           path: 'phone',
           builder: (_, _) => const PhoneScreen(),
           routes: [GoRoute(path: 'otp', builder: (_, _) => const OtpScreen())],
+        ),
+        GoRoute(
+          path: 'email',
+          builder: (_, _) => const PartnerEmailAuthScreen(),
+        ),
+        GoRoute(
+          path: 'email',
+          builder: (_, _) => const PartnerEmailAuthScreen(),
         ),
       ],
     ),

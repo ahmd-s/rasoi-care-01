@@ -37,7 +37,7 @@ class _BookingsScreenState extends ConsumerState<BookingsScreen> {
     final repo = ref.watch(repositoryProvider);
     final allBookings = repo.bookings();
     final filter = ref.watch(locationFilterProvider);
-    final bookings = allBookings?.where((b) => filter.matches(b.area)).toList();
+    final bookings = allBookings?.where((b) => filter.matches(b.city)).toList();
     final failed = repo.fetchFailed('bookings');
 
     return Scaffold(

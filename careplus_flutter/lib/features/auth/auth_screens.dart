@@ -18,6 +18,20 @@ import '../../data/local/recent_phone_store.dart';
 import '../../data/models.dart';
 import '../account/legal_document_screen.dart';
 
+/// Route a newly authenticated customer either to the app or, if this is a
+/// first login / incomplete profile, to the required profile setup form.
+Future<void> _routeCustomerAfterSignIn(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final isMock = ref.read(authFlowProvider.notifier).isMock;
+  final complete = isMock
+      ? false
+      : await ref.read(userProfileServiceProvider).hasCompletedProfile();
+  if (!context.mounted) return;
+  context.go(complete ? '/' : '/register');
+}
+
 // ============================================================ SPLASH
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -56,7 +70,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFFFBF7ED),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -65,7 +79,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             const SizedBox(height: 8),
             Text(context.l10n.authSplashTagline,
                 textAlign: TextAlign.center,
-                style: CareType.mono(CareColors.brass, size: 10)
+                style: CareType.mono(CareColors.pine, size: 10)
                     .copyWith(letterSpacing: 2.2, height: 1.6)),
           ],
         ),
@@ -238,7 +252,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
     if (!mounted) return;
     setState(() => _googleBusy = false);
     if (ok) {
-      context.go('/register');
+      await _routeCustomerAfterSignIn(context, ref);
     } else {
       final err = ref.read(authFlowProvider).error;
       if (err != null && err != 'Sign-in cancelled.') {
@@ -395,7 +409,7 @@ class _EmailAuthScreenState extends ConsumerState<EmailAuthScreen> {
         : await vm.signInWithEmail(email, password);
     if (!mounted) return;
     if (ok) {
-      context.go('/register');
+      await _routeCustomerAfterSignIn(context, ref);
     } else {
       final err = ref.read(authFlowProvider).error ?? t.authEmailGenericError;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
@@ -571,7 +585,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     if (!mounted) return;
     setState(() => _verifying = false);
     if (ok) {
-      context.go('/register');
+      await _routeCustomerAfterSignIn(context, ref);
     } else {
       final err = ref.read(authFlowProvider).error ?? context.l10n.authOtpVerificationFailed;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));

@@ -1,4 +1,4 @@
-// Android values are real — copied from the rasoi-care Firebase project's
+// Android values are real — copied from the rasoi-care-b78ea staging Firebase project's
 // google-services.json (package com.rasoicare.care_plus_partner, a separate
 // Android app registration under the same project as careplus_flutter). iOS
 // is still a placeholder since no app is registered for that platform yet.
@@ -34,22 +34,22 @@ class DefaultFirebaseOptions {
     apiKey: 'REPLACE_ME',
     appId: 'REPLACE_ME',
     messagingSenderId: 'REPLACE_ME',
-    projectId: 'rasoi-care',
+    projectId: 'rasoi-care-b78ea',
   );
 
   static const android = FirebaseOptions(
-    apiKey: 'AIzaSyA0zbJ3DzbAWF6ExXtW2DcIsaZ8HG1dQD0',
-    appId: '1:1064653219482:android:6865f3c584d89798e42123',
-    messagingSenderId: '1064653219482',
-    projectId: 'rasoi-care',
-    storageBucket: 'rasoi-care.firebasestorage.app',
+    apiKey: 'AIzaSyBcTSAtrbLlNCvqEEn_BVvaoftdtOdXIgU',
+    appId: '1:35192038815:android:e2160124450300be8349aa',
+    messagingSenderId: '35192038815',
+    projectId: 'rasoi-care-b78ea',
+    storageBucket: 'rasoi-care-b78ea.firebasestorage.app',
   );
 
   static const ios = FirebaseOptions(
     apiKey: 'REPLACE_ME',
     appId: 'REPLACE_ME',
     messagingSenderId: 'REPLACE_ME',
-    projectId: 'rasoi-care',
+    projectId: 'rasoi-care-b78ea',
     iosBundleId: 'com.rasoicare.carePlusPartner',
   );
 }

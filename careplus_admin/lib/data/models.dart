@@ -88,6 +88,7 @@ class AdminBooking {
     required this.totalPaise,
     this.createdAt,
     this.area,
+    this.city,
     this.customerName,
     this.directions,
     this.technicianName,
@@ -100,6 +101,7 @@ class AdminBooking {
   final int totalPaise;
   final DateTime? createdAt;
   final String? area;
+  final String? city;
   final String? customerName;
   final String? directions;
   final String? technicianName;

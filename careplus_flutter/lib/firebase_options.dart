@@ -1,4 +1,4 @@
-// Android values are real — copied from the rasoi-care Firebase project's
+// Android values are real — copied from the rasoi-care-b78ea staging Firebase project's
 // google-services.json (package com.careplus.care_plus). iOS/web are still
 // placeholders since no app is registered for those platforms yet; add them
 // the same way (Firebase console → Add app) if/when needed.
@@ -39,22 +39,22 @@ class DefaultFirebaseOptions {
     apiKey: 'REPLACE_ME',
     appId: 'REPLACE_ME',
     messagingSenderId: 'REPLACE_ME',
-    projectId: 'rasoi-care',
+    projectId: 'rasoi-care-b78ea',
   );
 
   static const android = FirebaseOptions(
-    apiKey: 'AIzaSyA0zbJ3DzbAWF6ExXtW2DcIsaZ8HG1dQD0',
-    appId: '1:1064653219482:android:f64b893d9752cfaae42123',
-    messagingSenderId: '1064653219482',
-    projectId: 'rasoi-care',
-    storageBucket: 'rasoi-care.firebasestorage.app',
+    apiKey: 'AIzaSyBcTSAtrbLlNCvqEEn_BVvaoftdtOdXIgU',
+    appId: '1:35192038815:android:d7208da53e60a9b28349aa',
+    messagingSenderId: '35192038815',
+    projectId: 'rasoi-care-b78ea',
+    storageBucket: 'rasoi-care-b78ea.firebasestorage.app',
   );
 
   static const ios = FirebaseOptions(
     apiKey: 'REPLACE_ME',
     appId: 'REPLACE_ME',
     messagingSenderId: 'REPLACE_ME',
-    projectId: 'rasoi-care',
+    projectId: 'rasoi-care-b78ea',
     iosBundleId: 'com.careplus.carePlus',
   );
 }

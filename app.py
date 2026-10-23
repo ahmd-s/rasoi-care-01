@@ -2827,7 +2827,10 @@ def list_services():
     sql = SERVICE_SELECT
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY services.name"
+    sql += (
+        " ORDER BY CASE WHEN services.id = 'svc_chimney_steam_deep_clean' "
+        "THEN 0 ELSE 1 END, services.name"
+    )
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -2961,8 +2964,14 @@ def list_bookings():
     neither (it has no login system) and so no longer gets a response —
     an accepted regression, same as the /advance and /health-update gates
     it was already broken against."""
-    user = get_current_user_optional()
-    staff = get_current_staff_optional() if not user else None
+    # An Admin app identity can also have a customer profile (same Firebase
+    # UID). Resolve staff first so the shared bookings endpoint returns the
+    # full ops queue to an active staff member instead of that customer's
+    # personal booking list. Customer-only identities remain self-scoped.
+    staff = get_current_staff_optional()
+    if staff and not staff["active"]:
+        staff = None
+    user = None if staff else get_current_user_optional()
     if not user and not staff:
         return jsonify({"error": "Unauthorized", "message": "Missing or invalid bearer token"}), 401
     conn = get_db()
@@ -2996,8 +3005,10 @@ def get_booking(booking_id):
     """Same auth requirement as list_bookings: a customer token can only
     fetch their own booking (404s otherwise, not 403, to avoid confirming
     other ids exist); a staff token can fetch any booking."""
-    user = get_current_user_optional()
-    staff = get_current_staff_optional() if not user else None
+    staff = get_current_staff_optional()
+    if staff and not staff["active"]:
+        staff = None
+    user = None if staff else get_current_user_optional()
     if not user and not staff:
         return jsonify({"error": "Unauthorized", "message": "Missing or invalid bearer token"}), 401
     conn = get_db()
@@ -3889,8 +3900,10 @@ def get_job_photo(booking_id, kind):
     route accepts, checked here against this specific booking's owners."""
     if kind not in _PHOTO_MIME:
         return jsonify({"error": "kind must be 'before', 'after', or 'signature'"}), 400
-    user = get_current_user_optional()
-    staff = get_current_staff_optional() if not user else None
+    staff = get_current_staff_optional()
+    if staff and not staff["active"]:
+        staff = None
+    user = None if staff else get_current_user_optional()
     technician = get_current_technician_optional() if not user and not staff else None
     if not user and not staff and not technician:
         return jsonify({"error": "Unauthorized", "message": "Missing or invalid bearer token"}), 401
@@ -6128,9 +6141,10 @@ def stats_reports():
     period = request.args.get("period", "week")
     days = PERIOD_DAYS.get(period, 7)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds") + "Z"
-    # Optional district filter (see careplus_admin's State -> District picker)
-    # — scopes every number in this report down to one operating area
-    # instead of the whole business.
+    # Optional district filter (see careplus_admin's State -> District picker).
+    # The client keeps the legacy `area` query parameter name, but bookings
+    # must be scoped by inferred city: bookings.area is only the customer's
+    # address label (for example, Home or Office).
     area = (request.args.get("area") or "").strip() or None
 
     conn = get_db()
@@ -6144,13 +6158,13 @@ def stats_reports():
     # users join, unrelated to the district filter added here.
     if area:
         bookings = conn.execute(
-            BOOKING_LIST_SELECT + " WHERE bookings.created_at >= ? AND bookings.area = ? "
+            BOOKING_LIST_SELECT + " WHERE bookings.created_at >= ? AND bookings.city = ? "
             "ORDER BY bookings.created_at",
             (cutoff, area),
         ).fetchall()
         complaints = conn.execute(
             "SELECT complaints.* FROM complaints JOIN bookings ON bookings.id = complaints.booking_id "
-            "WHERE complaints.created_at >= ? AND bookings.area = ?",
+            "WHERE complaints.created_at >= ? AND bookings.city = ?",
             (cutoff, area),
         ).fetchall()
         technicians = conn.execute("SELECT * FROM technicians WHERE area = ?", (area,)).fetchall()

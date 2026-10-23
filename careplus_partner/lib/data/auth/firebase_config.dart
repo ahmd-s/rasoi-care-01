@@ -7,6 +7,8 @@ class FirebaseConfig {
   /// requests an ID token Firebase Auth will actually accept; leaving this
   /// null still lets Google sign-in work for most setups, but set it if
   /// you see `sign_in_failed` / `DEVELOPER_ERROR` on Android.
+  // Staging project `rasoi-care-b78ea` Web client ID (client_type 3 from its
+  // google-services.json). Never use the production client ID here.
   static const String? googleServerClientId =
-      '1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com';
+      '35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com';
 }

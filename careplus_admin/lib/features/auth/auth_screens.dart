@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:smart_auth/smart_auth.dart';
 
 import '../../core/widgets/care_widgets.dart';
+import '../../core/widgets/brand_logo.dart';
 import '../../core/theme/care_plus_theme.dart';
 import '../../data/auth/mock_auth_service.dart';
 import '../../data/models.dart';
@@ -69,27 +70,20 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CareColors.pine,
+      backgroundColor: const Color(0xFFFBF7ED),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CareDial(
-              value: 0.78,
-              size: 110,
-              color: CareColors.brass,
-              trackColor: const Color(0x33F6F4EF),
-              child: const Icon(Icons.insights_outlined, color: CareColors.porcelain, size: 34),
-            ),
-            const SizedBox(height: 26),
-            Text('Rasoi Care', style: CareType.display(CareColors.porcelain, size: 34)),
+            const BrandLogo(size: 220, rounded: false),
+            const SizedBox(height: 20),
             Text('ADMIN',
-                style: CareType.mono(CareColors.brass, size: 13)
+                style: CareType.mono(CareColors.pine, size: 13)
                     .copyWith(letterSpacing: 4, fontWeight: FontWeight.w600)),
             const SizedBox(height: 20),
             Text('OPERATIONS · ANALYTICS · REPORTS',
                 textAlign: TextAlign.center,
-                style: CareType.mono(CareColors.porcelain.withValues(alpha: 0.6), size: 10)
+                style: CareType.mono(CareColors.pine.withValues(alpha: 0.78), size: 10)
                     .copyWith(letterSpacing: 2.2, height: 1.6)),
           ],
         ),
@@ -200,13 +194,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CareDial(
-                value: 1,
-                size: 54,
-                stroke: 5,
-                showTicks: false,
-                child: Icon(Icons.insights_outlined, color: context.scheme.primary, size: 22),
-              ),
+              const Center(child: BrandLogo(size: 128)),
               const SizedBox(height: 26),
               Text('Rasoi Care Admin', style: context.type.headlineLarge),
               const SizedBox(height: 10),

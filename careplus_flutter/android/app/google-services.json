@@ -1,42 +1,41 @@
 {
   "project_info": {
-    "project_number": "1064653219482",
-    "firebase_url": "https://rasoi-care-default-rtdb.firebaseio.com",
-    "project_id": "rasoi-care",
-    "storage_bucket": "rasoi-care.firebasestorage.app"
+    "project_number": "35192038815",
+    "project_id": "rasoi-care-b78ea",
+    "storage_bucket": "rasoi-care-b78ea.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1064653219482:android:f64b893d9752cfaae42123",
+        "mobilesdk_app_id": "1:35192038815:android:d7208da53e60a9b28349aa",
         "android_client_info": {
           "package_name": "com.careplus.care_plus"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1064653219482-lskdvtln58jsjmgk57jkp1vsjf3v5369.apps.googleusercontent.com",
+          "client_id": "35192038815-1h0jo39p49u05mukdcfm0vujtf67hcc7.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.careplus.care_plus",
-            "certificate_hash": "a12be527c5dacc2f4e9ffb4831f6ecd3b7b30a6b"
+            "certificate_hash": "d84213c24dbbabe5c9952744a3ebf338f3d683cb"
           }
         },
         {
-          "client_id": "1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com",
+          "client_id": "35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyA0zbJ3DzbAWF6ExXtW2DcIsaZ8HG1dQD0"
+          "current_key": "AIzaSyBcTSAtrbLlNCvqEEn_BVvaoftdtOdXIgU"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com",
+              "client_id": "35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
@@ -45,35 +44,35 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1064653219482:android:9357fbcd0bc3c701e42123",
+        "mobilesdk_app_id": "1:35192038815:android:9e372b5cfdfb62b58349aa",
         "android_client_info": {
           "package_name": "com.rasoicare.care_plus_admin"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1064653219482-6k5d6kbskoa2biaevq2nbfm7h7sq9i9q.apps.googleusercontent.com",
+          "client_id": "35192038815-gfq0gbv03mrn7s4vrcn333u1crnr4ieq.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.rasoicare.care_plus_admin",
-            "certificate_hash": "a12be527c5dacc2f4e9ffb4831f6ecd3b7b30a6b"
+            "certificate_hash": "d84213c24dbbabe5c9952744a3ebf338f3d683cb"
           }
         },
         {
-          "client_id": "1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com",
+          "client_id": "35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyA0zbJ3DzbAWF6ExXtW2DcIsaZ8HG1dQD0"
+          "current_key": "AIzaSyBcTSAtrbLlNCvqEEn_BVvaoftdtOdXIgU"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com",
+              "client_id": "35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
@@ -82,35 +81,35 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1064653219482:android:6865f3c584d89798e42123",
+        "mobilesdk_app_id": "1:35192038815:android:e2160124450300be8349aa",
         "android_client_info": {
           "package_name": "com.rasoicare.care_plus_partner"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1064653219482-mtsi7g8pa4hronlht8j7qi89d0qguo49.apps.googleusercontent.com",
+          "client_id": "35192038815-meh52tgh2mno0cge4fqn8kfk4fccpp0f.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.rasoicare.care_plus_partner",
-            "certificate_hash": "a12be527c5dacc2f4e9ffb4831f6ecd3b7b30a6b"
+            "certificate_hash": "d84213c24dbbabe5c9952744a3ebf338f3d683cb"
           }
         },
         {
-          "client_id": "1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com",
+          "client_id": "35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyA0zbJ3DzbAWF6ExXtW2DcIsaZ8HG1dQD0"
+          "current_key": "AIzaSyBcTSAtrbLlNCvqEEn_BVvaoftdtOdXIgU"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1064653219482-hb2hshp1lid889lefb0ac8ks7kvvf828.apps.googleusercontent.com",
+              "client_id": "35192038815-8m2vlbabmmnq7pvtqh2v6flcl2e5ts1a.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

@@ -167,7 +167,8 @@ class BackendClient {
   /// technicians were removed), or a generic one for a real network
   /// failure (offline, timeout) — so the caller can show the customer what
   /// actually went wrong instead of always blaming their connection.
-  Future<({Map<String, dynamic>? booking, String? error, bool unauthorized})> createBooking({
+  Future<({Map<String, dynamic>? booking, String? error, bool unauthorized})>
+      createBooking({
     required String idToken,
     required String category,
     required String service,
@@ -195,17 +196,20 @@ class BackendClient {
               // technician's job screen otherwise has nothing but "Home" to
               // go on even though the map pin (lat/lng, below) points at
               // the right spot.
-              if (addressLine != null && addressLine.isNotEmpty) 'addressLine': addressLine,
+              if (addressLine != null && addressLine.isNotEmpty)
+                'addressLine': addressLine,
               if (lat != null) 'lat': lat,
               if (lng != null) 'lng': lng,
-              if (directions != null && directions.isNotEmpty) 'directions': directions,
+              if (directions != null && directions.isNotEmpty)
+                'directions': directions,
               if (notes != null && notes.isNotEmpty) 'notes': notes,
               if (issues != null && issues.isNotEmpty) 'issues': issues,
               // .toUtc() first — a bare local-time ISO string (no offset)
               // would otherwise be silently misread as UTC server-side,
               // shifting the real cancellation-policy deadline by however
               // far local time is from UTC.
-              if (scheduledAt != null) 'scheduledAt': scheduledAt.toUtc().toIso8601String(),
+              if (scheduledAt != null)
+                'scheduledAt': scheduledAt.toUtc().toIso8601String(),
             }),
           )
           .timeout(_timeout);
@@ -228,14 +232,20 @@ class BackendClient {
       }
       // Business-logic rejections (e.g. the 503 "no technician available")
       // put the full human-readable reason directly in "error".
-      final message = decoded is Map<String, dynamic> ? decoded['error'] as String? : null;
+      final message =
+          decoded is Map<String, dynamic> ? decoded['error'] as String? : null;
       return (
         booking: null,
-        error: message ?? 'The server rejected this booking (${res.statusCode}).',
+        error:
+            message ?? 'The server rejected this booking (${res.statusCode}).',
         unauthorized: false,
       );
     } catch (_) {
-      return (booking: null, error: null, unauthorized: false); // real network failure — see file header
+      return (
+        booking: null,
+        error: null,
+        unauthorized: false
+      ); // real network failure — see file header
     }
   }
 
@@ -246,8 +256,13 @@ class BackendClient {
   /// are always the authoritative ones — never trust a locally-computed
   /// figure once this call returns. Same never-throw/best-effort shape as
   /// createBooking above.
-  Future<({List<Map<String, dynamic>>? bookings, Map<String, dynamic>? pricing, String? error, bool unauthorized})>
-      createBookingCart({
+  Future<
+      ({
+        List<Map<String, dynamic>>? bookings,
+        Map<String, dynamic>? pricing,
+        String? error,
+        bool unauthorized
+      })> createBookingCart({
     required String idToken,
     required List<String> serviceIds,
     required bool useCoins,
@@ -311,7 +326,8 @@ class BackendClient {
         return (
           bookings: null,
           pricing: null,
-          error: 'The server did not confirm your booking. Nothing was booked — please try again.',
+          error:
+              'The server did not confirm your booking. Nothing was booked — please try again.',
           unauthorized: false,
         );
       }
@@ -323,30 +339,40 @@ class BackendClient {
           unauthorized: true,
         );
       }
-      final serverMessage = decoded is Map<String, dynamic> && decoded['error'] is String
-          ? decoded['error'] as String
-          : null;
+      final serverMessage =
+          decoded is Map<String, dynamic> && decoded['error'] is String
+              ? decoded['error'] as String
+              : null;
       final String friendly;
       if (res.statusCode == 429) {
         friendly = 'Too many attempts — please wait a moment and try again.';
       } else if (res.statusCode >= 500 && serverMessage == null) {
-        friendly = 'Our server had a problem. Nothing was booked — please try again shortly.';
+        friendly =
+            'Our server had a problem. Nothing was booked — please try again shortly.';
       } else {
-        friendly = serverMessage ?? 'The server rejected this booking (${res.statusCode}).';
+        friendly = serverMessage ??
+            'The server rejected this booking (${res.statusCode}).';
       }
-      return (bookings: null, pricing: null, error: friendly, unauthorized: false);
+      return (
+        bookings: null,
+        pricing: null,
+        error: friendly,
+        unauthorized: false
+      );
     } on TimeoutException {
       return (
         bookings: null,
         pricing: null,
-        error: 'The server is taking too long to respond. Please check your connection and tap Confirm again — you will not be booked twice.',
+        error:
+            'The server is taking too long to respond. Please check your connection and tap Confirm again — you will not be booked twice.',
         unauthorized: false,
       );
     } catch (_) {
       return (
         bookings: null,
         pricing: null,
-        error: 'Could not reach the server. Please check your connection and try again.',
+        error:
+            'Could not reach the server. Please check your connection and try again.',
         unauthorized: false,
       );
     }
@@ -355,14 +381,13 @@ class BackendClient {
   /// GET /api/bookings with the caller's Firebase ID token — the backend
   /// scopes the result to that user's own bookings. Returns an empty list
   /// on any failure.
-  Future<List<Map<String, dynamic>>> fetchBookings({required String idToken}) async {
+  Future<List<Map<String, dynamic>>> fetchBookings(
+      {required String idToken}) async {
     try {
-      final res = await http
-          .get(
-            Uri.parse('${ApiConfig.baseUrl}/api/bookings'),
-            headers: {'Authorization': 'Bearer $idToken'},
-          )
-          .timeout(_timeout);
+      final res = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/bookings'),
+        headers: {'Authorization': 'Bearer $idToken'},
+      ).timeout(_timeout);
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
         if (decoded is List) {
@@ -390,12 +415,11 @@ class BackendClient {
     required String bookingId,
   }) async {
     try {
-      final res = await http
-          .post(
-            Uri.parse('${ApiConfig.baseUrl}/api/bookings/$bookingId/cancel/request-otp'),
-            headers: {'Authorization': 'Bearer $idToken'},
-          )
-          .timeout(_timeout);
+      final res = await http.post(
+        Uri.parse(
+            '${ApiConfig.baseUrl}/api/bookings/$bookingId/cancel/request-otp'),
+        headers: {'Authorization': 'Bearer $idToken'},
+      ).timeout(_timeout);
       final decoded = jsonDecode(res.body);
       if (decoded is Map<String, dynamic>) {
         if (res.statusCode == 200) {
@@ -406,14 +430,18 @@ class BackendClient {
           );
         }
         final message = (decoded['message'] ?? decoded['error']) as String?;
-        return (sent: null, error: message ?? 'Could not send a cancellation code — try again.');
+        return (
+          sent: null,
+          error: message ?? 'Could not send a cancellation code — try again.'
+        );
       }
     } catch (_) {
       // Best-effort — see file header.
     }
     return (
       sent: null,
-      error: 'Could not send a cancellation code — check your connection and try again.',
+      error:
+          'Could not send a cancellation code — check your connection and try again.',
     );
   }
 
@@ -448,7 +476,10 @@ class BackendClient {
           : null;
       return (booking: null, error: message ?? 'Could not cancel — try again.');
     } catch (_) {
-      return (booking: null, error: 'Could not cancel — check your connection and try again.');
+      return (
+        booking: null,
+        error: 'Could not cancel — check your connection and try again.'
+      );
     }
   }
 
@@ -488,7 +519,8 @@ class BackendClient {
     try {
       final res = await http
           .patch(
-            Uri.parse('${ApiConfig.baseUrl}/api/bookings/$bookingId/parts/$partId'),
+            Uri.parse(
+                '${ApiConfig.baseUrl}/api/bookings/$bookingId/parts/$partId'),
             headers: _headers(idToken),
             body: jsonEncode({'status': approve ? 'approved' : 'rejected'}),
           )
@@ -506,12 +538,10 @@ class BackendClient {
   /// customer has no coins before the fetch lands.
   Future<Map<String, dynamic>?> fetchMe({required String idToken}) async {
     try {
-      final res = await http
-          .get(
-            Uri.parse('${ApiConfig.baseUrl}/api/auth/me'),
-            headers: {'Authorization': 'Bearer $idToken'},
-          )
-          .timeout(_timeout);
+      final res = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/auth/me'),
+        headers: {'Authorization': 'Bearer $idToken'},
+      ).timeout(_timeout);
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
         if (decoded is Map<String, dynamic>) return decoded;
@@ -574,10 +604,14 @@ class BackendClient {
       if (res.statusCode == 201 && decoded is Map<String, dynamic>) {
         return (order: decoded, error: null);
       }
-      final message = decoded is Map<String, dynamic> ? decoded['error'] as String? : null;
+      final message =
+          decoded is Map<String, dynamic> ? decoded['error'] as String? : null;
       return (order: null, error: message ?? 'Could not place your order.');
     } catch (_) {
-      return (order: null, error: 'Could not reach the server — check your connection.');
+      return (
+        order: null,
+        error: 'Could not reach the server — check your connection.'
+      );
     }
   }
 
@@ -587,8 +621,9 @@ class BackendClient {
   /// load" state instead of silently rendering nothing.
   Future<Map<String, dynamic>?> fetchLegalDocument(String kind) async {
     try {
-      final res =
-          await http.get(Uri.parse('${ApiConfig.baseUrl}/api/legal/$kind')).timeout(_timeout);
+      final res = await http
+          .get(Uri.parse('${ApiConfig.baseUrl}/api/legal/$kind'))
+          .timeout(_timeout);
       if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
         if (decoded is Map<String, dynamic>) return decoded;

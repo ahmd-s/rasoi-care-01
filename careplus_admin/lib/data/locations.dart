@@ -21,11 +21,9 @@ class LocationFilter {
 
   List<String> get districtsInState => kStatesAndDistricts[stateName] ?? const [];
 
-  /// Whether a technician's or booking's `area` string falls under this
-  /// selection. A null [district] matches everything, including a record
-  /// with no area on file — only picking a specific district should ever
-  /// hide those.
-  bool matches(String? area) => district == null || area == district;
+  /// Whether a technician's service area or a booking's inferred city falls
+  /// under this selection. Booking `area` is only a label such as Home/Office.
+  bool matches(String? location) => district == null || location == district;
 
   String get label => district ?? 'All districts';
 }

@@ -14,12 +14,12 @@ void main() {
     expect(find.bySemanticsLabel('Rasoi Care'), findsOneWidget);
   });
 
-  test('the logo asset is declared, bundled and unmodified (1254x1254 JPEG)', () async {
+  test('the primary logo asset is declared, bundled and unmodified (875x880 PNG)', () async {
     final data = await rootBundle.load(BrandLogo.asset);
     final b = data.buffer.asUint8List();
-    expect(b.sublist(0, 2), [0xFF, 0xD8]); // JPEG, as supplied (not re-encoded)
+    expect(b.sublist(0, 8), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
     expect(File(BrandLogo.asset).lengthSync(), b.length);
     final decoded = await decodeImageFromList(b);
-    expect([decoded.width, decoded.height], [1254, 1254]);
+    expect([decoded.width, decoded.height], [875, 880]);
   });
 }

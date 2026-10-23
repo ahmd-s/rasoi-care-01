@@ -81,6 +81,18 @@ class FirebaseAuthService implements AuthService {
   }
 
   @override
+  Future<void> sendPasswordResetEmail(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+    } on FirebaseAuthException catch (e) {
+      // Keep account existence private; the UI shows the same confirmation
+      // whether or not a matching email is registered.
+      if (e.code == 'user-not-found') return;
+      throw AuthException(_friendly(e));
+    }
+  }
+
+  @override
   Future<void> signInWithGoogle() async {
     try {
       final googleSignIn = GoogleSignIn(serverClientId: FirebaseConfig.googleServerClientId);

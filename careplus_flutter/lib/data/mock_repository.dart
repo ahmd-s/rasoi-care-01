@@ -48,11 +48,29 @@ class MockRepository implements CareRepository {
   List<ServiceItem> servicesFor(Appliance a) => switch (a) {
         Appliance.chimney => [
             ServiceItem(
+              id: 'svc_chimney_steam_deep_clean',
+              appliance: a,
+              title: 'Steam deep clean',
+              blurb: 'Steam-assisted cleaning for filters, blower and oil collector · 75 min',
+              pricePaise: 129900,
+              durationMin: 75,
+              included: const [
+                'Steam-assisted degreasing of baffle or mesh filters',
+                'Blower wheel and motor housing cleaned',
+                'Oil collector emptied and washed',
+                'Suction checked after cleaning',
+                'Floor sheeting and full cleanup',
+              ],
+              notIncluded: 'Replacement filters, motor rewinding, control boards and duct '
+                  'extensions beyond 6 ft. Quoted in the app before work starts.',
+              requirements: const ['Bucket & water', 'Power point nearby', 'Ladder or stool'],
+            ),
+            ServiceItem(
               id: 'svc_chimney_deep_clean_full',
               appliance: a,
               title: 'Deep clean — filters, motor, duct',
               blurb: 'Degreasing bath for baffle filters, blower and oil collector · 90 min',
-              pricePaise: 159900,
+              pricePaise: 169900,
               durationMin: 90,
               mostBooked: true,
               included: const [
@@ -173,7 +191,7 @@ class MockRepository implements CareRepository {
               appliance: a,
               title: 'Installation with gas line check',
               blurb: 'Countertop or built-in mount, leak-tested on every joint',
-              pricePaise: 69900,
+              pricePaise: 49900,
               durationMin: 75,
               included: const [
                 'Countertop or built-in mounting',
@@ -188,7 +206,7 @@ class MockRepository implements CareRepository {
               appliance: a,
               title: 'Uninstall and cap the line',
               blurb: 'Safe gas disconnection and capping for a move',
-              pricePaise: 39900,
+              pricePaise: 29900,
               durationMin: 45,
               included: const [
                 'Safe gas disconnection',

@@ -542,11 +542,23 @@ class AuthFlowVM extends Notifier<AuthFlowState> {
     return true;
   }
 
-  Future<bool> registerWithEmail(String email, String password) => _submit(
-      () => ref.read(authServiceProvider).registerWithEmail(email: email, password: password));
+  Future<bool> registerWithEmail(String email, String password) {
+    if (state.signInRole != SignInRole.technician) {
+      state = state.copyWith(error: 'Email sign-in is available for technicians only.');
+      return Future.value(false);
+    }
+    return _submit(
+        () => ref.read(authServiceProvider).registerWithEmail(email: email, password: password));
+  }
 
-  Future<bool> signInWithEmail(String email, String password) => _submit(
-      () => ref.read(authServiceProvider).signInWithEmail(email: email, password: password));
+  Future<bool> signInWithEmail(String email, String password) {
+    if (state.signInRole != SignInRole.technician) {
+      state = state.copyWith(error: 'Email sign-in is available for technicians only.');
+      return Future.value(false);
+    }
+    return _submit(
+        () => ref.read(authServiceProvider).signInWithEmail(email: email, password: password));
+  }
 
   Future<bool> signInWithGoogle() {
     final selected = state.signInRole;

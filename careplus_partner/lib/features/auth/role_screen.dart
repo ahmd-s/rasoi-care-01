@@ -41,7 +41,7 @@ class RoleSelectScreen extends ConsumerWidget {
                 key: const Key('role-technician'),
                 icon: Icons.handyman_outlined,
                 title: 'Technician',
-                body: 'Field jobs, earnings and your application. Phone OTP or Google.',
+                body: 'Field jobs, earnings and your application. Phone, Google or email.',
                 onTap: () => _pick(context, ref, SignInRole.technician),
               ),
               const SizedBox(height: 12),

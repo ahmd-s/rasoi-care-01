@@ -464,19 +464,20 @@ SERVICES_SEED = [
 # always shown (previously hardcoded client-side with no real catalog row
 # behind them, so a booking's price could never be verified server-side).
 # Added via migrate_add_customer_catalog_services below rather than
-# SERVICES_SEED so it reaches databases that were already seeded — prices
-# match exactly what the app already charges, so this changes no customer-
-# facing number, only makes it server-verifiable.
+# SERVICES_SEED so it reaches databases that were already seeded. The
+# versioned customer-catalog migration below applies the approved October
+# price changes without resetting later admin-managed prices at each boot.
 CUSTOMER_CATALOG_SEED = [
-    ("svc_chimney_deep_clean_full", "app_chimney", "RasoiAir", "Deep clean — filters, motor, duct", 1599, 0),
+    ("svc_chimney_steam_deep_clean", "app_chimney", "RasoiAir", "Steam deep clean", 1299, 0),
+    ("svc_chimney_deep_clean_full", "app_chimney", "RasoiAir", "Deep clean — filters, motor, duct", 1699, 0),
     ("svc_chimney_filter_clean", "app_chimney", "RasoiAir", "Normal filter clean", 899, 0),
     ("svc_chimney_repair_visit", "app_chimney", "RasoiAir", "Repair visit and diagnosis", 399, 1),
     ("svc_chimney_install", "app_chimney", "RasoiAir", "Installation with duct work", 1699, 0),
     ("svc_chimney_uninstall", "app_chimney", "RasoiAir", "Uninstall and shift", 599, 0),
     ("svc_hob_deep_clean_full", "app_hob", "RasoiSpark", "Deep clean — burners, valves, igniters", 799, 0),
     ("svc_hob_repair_visit", "app_hob", "RasoiSpark", "Repair visit and diagnosis", 399, 1),
-    ("svc_hob_install", "app_hob", "RasoiSpark", "Installation with gas line check", 699, 0),
-    ("svc_hob_uninstall", "app_hob", "RasoiSpark", "Uninstall and cap the line", 399, 0),
+    ("svc_hob_install", "app_hob", "RasoiSpark", "Installation with gas line check", 499, 0),
+    ("svc_hob_uninstall", "app_hob", "RasoiSpark", "Uninstall and cap the line", 299, 0),
     ("svc_cooktop_deep_clean_full", "app_cooktop", "RasoiSpark", "Deep clean and calibration", 499, 0),
     ("svc_cooktop_repair_visit", "app_cooktop", "RasoiSpark", "Repair visit and diagnosis", 399, 1),
     ("svc_cooktop_install", "app_cooktop", "RasoiSpark", "Installation and panel fitting", 399, 0),
@@ -1294,6 +1295,35 @@ def migrate_add_customer_catalog_services(conn):
     conn.commit()
 
 
+def migrate_customer_catalog_price_updates(conn):
+    """Apply the October customer-approved catalogue changes once.
+
+    Seed rows are normally insert-only so admin-managed prices survive later
+    boots. This versioned migration intentionally updates only the three
+    requested existing prices; the steam service is added by the seed above.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations "
+        "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    version = "customer_catalog_steam_and_prices_2026_10"
+    if conn.execute("SELECT 1 FROM schema_migrations WHERE version = ?", (version,)).fetchone():
+        return
+    for service_id, price in (
+        ("svc_chimney_deep_clean_full", 1699),
+        ("svc_hob_install", 499),
+        ("svc_hob_uninstall", 299),
+    ):
+        conn.execute("UPDATE services SET price = ? WHERE id = ?", (price, service_id))
+    insert = "INSERT" if DATABASE_URL else "INSERT OR IGNORE"
+    on_conflict = "ON CONFLICT (version) DO NOTHING" if DATABASE_URL else ""
+    conn.execute(
+        f"{insert} INTO schema_migrations (version, applied_at) VALUES (?, ?) {on_conflict}",
+        (version, now()),
+    )
+    conn.commit()
+
+
 def init_db():
     conn = get_db()
     try:
@@ -1334,6 +1364,7 @@ def _init_db_contents(conn):
     migrate_home_services_columns(conn)
     seed_catalog(conn)
     migrate_add_customer_catalog_services(conn)
+    migrate_customer_catalog_price_updates(conn)
     seed_staff(conn)
     # Cleans up the four demo technicians and two demo bookings any
     # deployment before this fix already picked up from the old

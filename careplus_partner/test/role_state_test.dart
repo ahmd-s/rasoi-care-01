@@ -22,6 +22,8 @@ class _FakeAuth implements AuthService {
   @override
   Future<void> signInWithEmail({required String email, required String password}) async {}
   @override
+  Future<void> sendPasswordResetEmail(String email) async {}
+  @override
   Future<void> signInWithGoogle() async => signedIn = true;
   @override
   Future<void> signOut() async => signedIn = false;

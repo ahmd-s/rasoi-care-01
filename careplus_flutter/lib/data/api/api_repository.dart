@@ -17,7 +17,8 @@ import 'appliance_category.dart';
 import 'backend_client.dart';
 
 class ApiRepository implements CareRepository {
-  ApiRepository({BackendClient? client, this.onBookingsChanged, this.onCoinsChanged})
+  ApiRepository(
+      {BackendClient? client, this.onBookingsChanged, this.onCoinsChanged})
       : _client = client ?? BackendClient(),
         _mock = MockRepository() {
     unawaited(_loadInitialBookings());
@@ -207,7 +208,8 @@ class ApiRepository implements CareRepository {
   /// Places a real shop order (see ShopScreen's cart/checkout) — `items` is
   /// `{productId: qty}`. Returns the placed order's total on success, or an
   /// error message on failure; never throws.
-  Future<({int? totalPaise, String? error})> placeShopOrder(Map<String, int> items) async {
+  Future<({int? totalPaise, String? error})> placeShopOrder(
+      Map<String, int> items) async {
     final token = await _idToken();
     if (token == null) {
       return (totalPaise: null, error: 'Sign in again to place an order.');
@@ -221,7 +223,10 @@ class ApiRepository implements CareRepository {
     if (result.order == null) {
       return (totalPaise: null, error: result.error);
     }
-    return (totalPaise: (result.order!['totalPaise'] as num).toInt(), error: null);
+    return (
+      totalPaise: (result.order!['totalPaise'] as num).toInt(),
+      error: null
+    );
   }
 
   Future<bool> redeemCoins(int amount) async {
@@ -263,8 +268,10 @@ class ApiRepository implements CareRepository {
     DateTime? scheduledAt,
   }) async {
     final token = await _idToken();
-    if (token == null) return (booking: null, error: 'You need to be signed in to book.');
-    final category = applianceToBackendCategory[service.appliance] ?? 'RasoiAir';
+    if (token == null)
+      return (booking: null, error: 'You need to be signed in to book.');
+    final category =
+        applianceToBackendCategory[service.appliance] ?? 'RasoiAir';
     var result = await _client.createBooking(
       idToken: token,
       category: category,
@@ -401,10 +408,12 @@ class ApiRepository implements CareRepository {
   /// "Submit rating" button never called anything, just showed a fake
   /// "60 Care Coins added" toast and went home regardless of what was
   /// picked. Returns true only if the backend actually recorded it.
-  Future<bool> rateBooking({required String bookingId, required int rating}) async {
+  Future<bool> rateBooking(
+      {required String bookingId, required int rating}) async {
     final token = await _idToken();
     if (token == null) return false;
-    return _client.rateBooking(idToken: token, bookingId: bookingId, rating: rating);
+    return _client.rateBooking(
+        idToken: token, bookingId: bookingId, rating: rating);
   }
 
   /// Approves or rejects a part/extra-work quote a technician raised for
@@ -426,7 +435,8 @@ class ApiRepository implements CareRepository {
 
   Booking _bookingFromJson(Map<String, dynamic> json) {
     final categoryStr = json['category'] as String?;
-    final appliance = backendCategoryToAppliance[categoryStr] ?? Appliance.chimney;
+    final appliance =
+        backendCategoryToAppliance[categoryStr] ?? Appliance.chimney;
     final totalRupees = (json['total_amount'] as num?)?.toInt() ??
         (json['price'] as num?)?.toInt() ??
         0;
@@ -515,9 +525,11 @@ class ApiRepository implements CareRepository {
   /// BackendClient.requestCancelOtp) — no phone on file, the SMS gateway
   /// itself failing, or a network/auth problem reaching our own backend at
   /// all are genuinely different situations, each with its own message.
-  Future<({bool? sent, String? error})> requestCancelOtp(String bookingId) async {
+  Future<({bool? sent, String? error})> requestCancelOtp(
+      String bookingId) async {
     final token = await _idToken();
-    if (token == null) return (sent: null, error: 'You need to be signed in to cancel.');
+    if (token == null)
+      return (sent: null, error: 'You need to be signed in to cancel.');
     return _client.requestCancelOtp(idToken: token, bookingId: bookingId);
   }
 
@@ -534,7 +546,8 @@ class ApiRepository implements CareRepository {
   }) async {
     final token = await _idToken();
     if (token == null) return (feePaise: null, error: 'Not signed in.');
-    final result = await _client.cancelBooking(idToken: token, bookingId: bookingId, otp: otp);
+    final result = await _client.cancelBooking(
+        idToken: token, bookingId: bookingId, otp: otp);
     if (result.booking == null) return (feePaise: null, error: result.error);
     final updated = _bookingFromJson(result.booking!);
     _realBookings = [
@@ -583,8 +596,7 @@ class ApiRepository implements CareRepository {
   @override
   Stream<int> etaStream(String bookingId) => _mock.etaStream(bookingId);
 
-  List<Booking> get _allBookings =>
-      _realBookings ?? const [];
+  List<Booking> get _allBookings => _realBookings ?? const [];
 
   @override
   List<Booking> bookings({BookingStatus? status, bool completed = false}) {
@@ -601,7 +613,8 @@ class ApiRepository implements CareRepository {
     // for), since it's neither the completed status nor a status match.
     return all
         .where((b) =>
-            b.status != BookingStatus.completed && b.status != BookingStatus.cancelled)
+            b.status != BookingStatus.completed &&
+            b.status != BookingStatus.cancelled)
         .where((b) => status == null || b.status == status)
         .toList();
   }

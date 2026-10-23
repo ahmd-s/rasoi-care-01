@@ -46,6 +46,30 @@ class UserProfile {
 /// write fails for any reason, this is a silent no-op and the person still
 /// gets into the app — see RegisterScreen in auth_screens.dart.
 class UserProfileService {
+  /// True when this Firebase identity already has the minimum customer
+  /// profile needed to use the app. A missing or incomplete document routes
+  /// the user through registration after sign-in; Firestore failures safely
+  /// fall back to that same completion flow.
+  Future<bool> hasCompletedProfile() async {
+    if (Firebase.apps.isEmpty) return false;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get()
+          .timeout(const Duration(seconds: 6));
+      final data = snapshot.data();
+      if (data == null) return false;
+      return (data['name'] as String?)?.trim().isNotEmpty == true &&
+          (data['phone'] as String?)?.trim().isNotEmpty == true &&
+          (data['address'] as String?)?.trim().isNotEmpty == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Live view of the signed-in person's profile — null in mock mode or
   /// when nobody's signed in, so AccountScreen knows to show its own demo
   /// fallback instead. Streamed (not a one-off get) so the screen updates

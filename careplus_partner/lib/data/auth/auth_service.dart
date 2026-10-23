@@ -34,6 +34,9 @@ abstract interface class AuthService {
   /// [AuthException] on failure (wrong password, no such user, etc).
   Future<void> signInWithEmail({required String email, required String password});
 
+  /// Sends a password reset link to an existing email account.
+  Future<void> sendPasswordResetEmail(String email);
+
   /// Signs in with Google. Throws an [AuthException] on failure, including
   /// when the person closes the account picker without choosing one.
   Future<void> signInWithGoogle();

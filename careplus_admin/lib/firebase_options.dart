@@ -38,11 +38,11 @@ class DefaultFirebaseOptions {
   );
 
   static const android = FirebaseOptions(
-    apiKey: 'AIzaSyA0zbJ3DzbAWF6ExXtW2DcIsaZ8HG1dQD0',
-    appId: '1:1064653219482:android:9357fbcd0bc3c701e42123',
-    messagingSenderId: '1064653219482',
+    apiKey: 'AIzaSyBcTSAtrbLlNCvqEEn_BVvaoftdtOdXIgU',
+    appId: '1:35192038815:android:9e372b5cfdfb62b58349aa',
+    messagingSenderId: '35192038815',
     projectId: 'rasoi-care',
-    storageBucket: 'rasoi-care.firebasestorage.app',
+    storageBucket: 'rasoi-care-b78ea.firebasestorage.app',
   );
 
   static const ios = FirebaseOptions(

@@ -16,6 +16,8 @@
   "homeLastDone": "पिछली बार {when} को किया गया",
   "homeRebook": "दोबारा बुक करें",
   "homeMostBooked": "सबसे ज्यादा बुक की गई",
+  "homePassportEyebrow": "ग्राहक किचन",
+  "homePassportDescription": "आपके उपकरण, सर्विस इतिहास और देखभाल के सुझाव।",
 
   "notificationsTitle": "सूचनाएं",
   "notificationsBody": "अभी तक कोई असली सूचना प्रणाली सेट नहीं है — न पुश अलर्ट, न ऐप में फ़ीड। हम यहां झूठी बैज संख्या दिखाने के बजाय कुछ भी न दिखाना बेहतर समझते हैं।",
@@ -246,6 +248,8 @@
   "addressDetailsPhotoHeader": "स्थान की फ़ोटो (सुझावित)",
   "addressDetailsPhotoHint": "तकनीशियन को प्रवेश द्वार पहचानने में मदद करता है।",
   "addressDetailsAddPhoto": "फ़ोटो जोड़ें",
+  "addressDetailsTakePhoto": "फ़ोटो लें",
+  "addressDetailsChooseGallery": "गैलरी से चुनें",
   "mapPickerSearchHint": "किसी क्षेत्र या लैंडमार्क को खोजें",
   "mapPickerUseCurrentLocation": "मेरा वर्तमान स्थान इस्तेमाल करें",
   "mapPickerSearchError": "पता खोज अभी काम नहीं कर रही है।",
