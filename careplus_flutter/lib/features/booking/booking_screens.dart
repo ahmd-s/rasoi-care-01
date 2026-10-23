@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -512,6 +513,13 @@ class PaymentScreen extends ConsumerStatefulWidget {
 
 class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   bool _submitting = false;
+
+  /// The customer's actual choice — it decides which path `_pay` takes.
+  bool _payNow = true;
+
+  /// Reused across retries of one pay-after-service confirmation so a lost
+  /// response can't create a second booking.
+  String? _idemKey;
   late final Razorpay _razorpay;
   String? _pendingOrderId;
   PaymentSuccessResponse? _pendingPayment;
@@ -611,6 +619,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       );
       return;
     }
+    if (!_payNow && shopCart.isNotEmpty) {
+      // Cleaning kits are delivered products: they are only sold prepaid.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.paymentShopNeedsOnline)),
+      );
+      return;
+    }
     setState(() => _submitting = true);
     try {
       SavedAddress? selected;
@@ -640,13 +655,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         for (final issue in draft.issues)
           if (issue.selected) issue.label,
       ];
-      if (draft.useCoins) {
+      if (_payNow && draft.useCoins) {
         if (!mounted) return;
         setState(() => _submitting = false);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text(
-              'Turn off Care Coins to pay online. Care Coins are not available with Razorpay yet.'),
+              'Turn off Care Coins to pay online. They can’t be combined with online payment yet.'),
         ));
+        return;
+      }
+      if (!_payNow) {
+        await _confirmPayAfterService(
+            draft, selected, directions, notes, selectedIssues);
         return;
       }
       final bookingPayload = <String, dynamic>{
@@ -711,6 +731,80 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
+  /// Pay after service: the booking is created with no upfront payment and
+  /// recorded by the server as payable. The server enforces this mode; the
+  /// client cannot mark anything as paid.
+  Future<void> _confirmPayAfterService(
+    BookingDraft draft,
+    SavedAddress? selected,
+    String directions,
+    String notes,
+    List<String> issues,
+  ) async {
+    _idemKey ??= 'pas-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
+    final result = await ref.read(apiRepositoryProvider).createBookingCart(
+          services: draft.services,
+          useCoins: draft.useCoins,
+          paymentMode: 'pay_after_service',
+          areaLabel: selected?.label,
+          addressLine: selected?.line,
+          lat: selected?.lat,
+          lng: selected?.lng,
+          directions: directions.isEmpty ? null : directions,
+          notes: notes.isEmpty ? null : notes,
+          issues: issues.isEmpty ? null : issues,
+          scheduledAt: draft.scheduledAt,
+          idempotencyKey: _idemKey,
+        );
+    if (!mounted) return;
+    setState(() => _submitting = false);
+    final bookings = result.bookings;
+    if (bookings == null || bookings.isEmpty) {
+      // Keep the key: retrying the same checkout must not duplicate it.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? context.l10n.paymentOrderError)),
+      );
+      return;
+    }
+    _idemKey = null;
+    context.go('/booking/${bookings.first.id}/confirmed', extra: bookings.length);
+  }
+
+  Widget _payOption(
+    BuildContext context, {
+    required Key key,
+    required bool selected,
+    required IconData icon,
+    required String title,
+    required String detail,
+    required VoidCallback onTap,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: CareCard(
+          key: key,
+          onTap: _submitting ? null : onTap,
+          borderColor: selected ? context.scheme.primary : null,
+          child: Row(children: [
+            Icon(icon, color: selected ? context.scheme.primary : context.care.inkFaint),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(detail, style: context.type.bodySmall),
+                ],
+              ),
+            ),
+            Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: selected ? context.scheme.primary : context.care.inkFaint),
+          ]),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final draft = ref.watch(bookingDraftProvider);
@@ -738,9 +832,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Eyebrow(_pendingPayment == null
-                  ? t.paymentDueAfterVisit
-                  : t.paymentRetryVerification),
+              Eyebrow(_pendingPayment != null
+                  ? t.paymentRetryVerification
+                  : _payNow
+                      ? t.paymentDueNow
+                      : t.paymentDueAfterVisit),
               Text(Money.rupees(grandTotalPaise),
                   style: CareType.mono(context.scheme.onSurface,
                       size: 17, w: FontWeight.w600)),
@@ -755,9 +851,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   height: 18,
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white))
-              : Text(_pendingPayment == null
-                  ? t.paymentPayButton(Money.rupees(grandTotalPaise))
-                  : t.paymentRetryVerification),
+              : Text(_pendingPayment != null
+                  ? t.paymentRetryVerification
+                  : _payNow
+                      ? t.paymentPayNowButton(Money.rupees(grandTotalPaise))
+                      : t.paymentPayButton(Money.rupees(grandTotalPaise))),
         ),
       ]),
       body: Column(
@@ -832,28 +930,28 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               ],
             ),
           ),
-          // Care Coins are intentionally hidden during Razorpay checkout
-          // until the server can safely reserve/refund them around payment.
+          // Care Coins stay hidden: they can't yet be combined with online
+          // payment, and the choice below really does pick the flow.
           SectionHeader(t.paymentAfterVisitSection),
-          CareCard(
-            borderColor: context.scheme.primary,
-            child: Row(children: [
-              Icon(Icons.payments_outlined, color: context.scheme.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(t.paymentAfterVisitTitle,
-                        style: const TextStyle(
-                            fontSize: 13.5, fontWeight: FontWeight.w700)),
-                    Text(t.paymentAfterVisitDetail,
-                        style: context.type.bodySmall),
-                  ],
-                ),
-              ),
-              Icon(Icons.check_circle, color: context.scheme.primary),
-            ]),
+          _payOption(
+            context,
+            key: const Key('pay-choice-now'),
+            selected: _payNow,
+            icon: Icons.payments_outlined,
+            title: t.paymentNowTitle,
+            detail: t.paymentNowDetail,
+            onTap: () => setState(() => _payNow = true),
+          ),
+          _payOption(
+            context,
+            key: const Key('pay-choice-after'),
+            selected: !_payNow,
+            icon: Icons.event_available_outlined,
+            title: t.paymentAfterVisitTitle,
+            detail: shopCart.isEmpty
+                ? t.paymentAfterVisitDetail
+                : t.paymentShopNeedsOnline,
+            onTap: () => setState(() => _payNow = false),
           ),
         ],
       ),
@@ -927,6 +1025,22 @@ class ConfirmedScreen extends ConsumerWidget {
                         const SizedBox(height: 14),
                         Mono('JOB $bookingId',
                             color: context.scheme.secondary, size: 13),
+                        if (booking != null && booking.payment.isPayAfterService && !booking.payment.isPaid) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            key: const Key('confirmed-pay-after-note'),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: context.scheme.surfaceContainerHigh,
+                              borderRadius: Radii.rSm,
+                            ),
+                            child: Text(
+                              t.confirmedPayAfterNote(Money.rupees(booking.payment.duePaise)),
+                              textAlign: TextAlign.center,
+                              style: context.type.bodySmall,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

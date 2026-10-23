@@ -77,7 +77,7 @@ class _InvoiceScreenState extends ConsumerState<InvoiceScreen> {
                                 Text(booking?.whenLabel ?? '', style: context.type.bodySmall),
                               ],
                             ),
-                            if (booking?.status == BookingStatus.completed) _PaidStamp(),
+                            if (booking?.status == BookingStatus.completed && booking!.payment.isPaid) _PaidStamp(),
                           ],
                         ),
                         const Divider(height: 24),
@@ -87,7 +87,7 @@ class _InvoiceScreenState extends ConsumerState<InvoiceScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(t.invoiceTotalPaid,
+                            Text(booking?.payment.isPaid == true ? t.invoiceTotalPaid : t.invoiceAmountDue,
                                 style: const TextStyle(fontWeight: FontWeight.w700)),
                             Text(Money.rupees(total),
                                 style: CareType.mono(context.scheme.onSurface,
@@ -97,6 +97,12 @@ class _InvoiceScreenState extends ConsumerState<InvoiceScreen> {
                       ],
                     ),
                   ),
+                  if (booking != null &&
+                      booking.status == BookingStatus.completed &&
+                      !booking.payment.isPaid) ...[
+                    const SizedBox(height: 12),
+                    _PaymentDueCard(bookingId: bookingId, booking: booking),
+                  ],
                   if (booking != null && booking.serviceChanges.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     CareCard(
@@ -391,6 +397,73 @@ class _AirflowCompare extends StatelessWidget {
           Text(value, style: CareType.mono(valueColor, size: 15, w: FontWeight.w600)),
         ],
       );
+}
+
+/// Shown on a completed, still-unpaid invoice. "Paid" never comes from this
+/// screen: Refresh asks the server to re-check the payment provider.
+class _PaymentDueCard extends ConsumerStatefulWidget {
+  const _PaymentDueCard({required this.bookingId, required this.booking});
+  final String bookingId;
+  final Booking booking;
+  @override
+  ConsumerState<_PaymentDueCard> createState() => _PaymentDueCardState();
+}
+
+class _PaymentDueCardState extends ConsumerState<_PaymentDueCard> {
+  bool _checking = false;
+  bool _failed = false;
+
+  Future<void> _refresh() async {
+    final repo = ref.read(repositoryProvider);
+    if (repo is! ApiRepository) return;
+    setState(() {
+      _checking = true;
+      _failed = false;
+    });
+    final ok = await repo.refreshPaymentStatus(widget.bookingId);
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _failed = !ok;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.l10n;
+    return CareCard(
+      key: const Key('payment-due-card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(t.invoiceAmountDue, style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(Money.rupees(widget.booking.payment.duePaise),
+                  style: CareType.mono(context.scheme.onSurface, size: 16, w: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(t.invoicePayTechnicianNote, style: context.type.bodySmall),
+          if (_failed) ...[
+            const SizedBox(height: 6),
+            Text(t.invoicePaymentCheckFailed,
+                style: context.type.bodySmall!.copyWith(color: context.scheme.error)),
+          ],
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const Key('refresh-payment-status'),
+            onPressed: _checking ? null : _refresh,
+            icon: _checking
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.refresh),
+            label: Text(t.invoiceRefreshPayment),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _PaidStamp extends StatelessWidget {

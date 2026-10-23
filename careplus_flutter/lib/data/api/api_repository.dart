@@ -174,6 +174,17 @@ class ApiRepository implements CareRepository {
   /// ask again once a real signed-in user is actually available.
   Future<void> refreshBookings() => _loadInitialBookings();
 
+  /// Asks the server to re-check this booking's payment with the payment
+  /// provider (a technician's QR payment may have just landed) and reloads
+  /// bookings. Returns false if the check could not be made.
+  Future<bool> refreshPaymentStatus(String bookingId) async {
+    final token = await _idToken();
+    if (token == null) return false;
+    final ok = await _client.checkBookingPayment(idToken: token, bookingId: bookingId);
+    if (ok) await refreshBookings();
+    return ok;
+  }
+
   Future<void> _fetchMe() async {
     final token = await _idToken();
     if (token == null) return;
@@ -324,9 +335,11 @@ class ApiRepository implements CareRepository {
     List<String>? issues,
     DateTime? scheduledAt,
     String? idempotencyKey,
+    String? paymentMode,
   }) async {
     final token = await _idToken();
-    if (token == null) return (bookings: null, error: 'You need to be signed in to book.');
+    if (token == null)
+      return (bookings: null, error: 'You need to be signed in to book.');
     final serviceIds = [for (final s in services) s.id];
     var result = await _client.createBookingCart(
       idToken: token,
@@ -341,6 +354,7 @@ class ApiRepository implements CareRepository {
       issues: issues,
       scheduledAt: scheduledAt,
       idempotencyKey: idempotencyKey,
+      paymentMode: paymentMode,
     );
     if (result.unauthorized) {
       // Valid Firebase token but no backend profile yet: the post-sign-in
@@ -362,11 +376,16 @@ class ApiRepository implements CareRepository {
           issues: issues,
           scheduledAt: scheduledAt,
           idempotencyKey: idempotencyKey,
+          paymentMode: paymentMode,
         );
       }
     }
     if (result.bookings == null || result.bookings!.isEmpty) {
-      return (bookings: null, error: result.error ?? 'Your booking could not be confirmed. Please try again.');
+      return (
+        bookings: null,
+        error: result.error ??
+            'Your booking could not be confirmed. Please try again.'
+      );
     }
     final bookings = [for (final b in result.bookings!) _bookingFromJson(b)];
     _realBookings = [...(_realBookings ?? []), ...bookings];
@@ -457,6 +476,7 @@ class ApiRepository implements CareRepository {
               .map(ServiceChange.fromJson)
               .toList(growable: false) ??
           const [],
+      payment: BookingPayment.fromJson(json['payment']),
     );
   }
 

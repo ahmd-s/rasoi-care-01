@@ -27,6 +27,29 @@ class _FakeRepo extends ApiRepository {
   int orderCalls = 0;
   final verifyCalls = <(String, String, String)>[];
 
+  /// Pay-after-service: the booking-cart calls (paymentMode, idempotency key).
+  final cartCalls = <({String? mode, String? key, bool useCoins})>[];
+  Future<({List<Booking>? bookings, String? error})> Function()? cartHandler;
+
+  @override
+  Future<({List<Booking>? bookings, String? error})> createBookingCart({
+    required List<ServiceItem> services,
+    required bool useCoins,
+    String? areaLabel,
+    String? addressLine,
+    double? lat,
+    double? lng,
+    String? directions,
+    String? notes,
+    List<String>? issues,
+    DateTime? scheduledAt,
+    String? idempotencyKey,
+    String? paymentMode,
+  }) {
+    cartCalls.add((mode: paymentMode, key: idempotencyKey, useCoins: useCoins));
+    return cartHandler!();
+  }
+
   @override
   Future<({Map<String, dynamic>? order, String? error})> createRazorpayOrder({
     required List<ServiceItem> services,
@@ -136,7 +159,9 @@ Future<(ProviderContainer, String Function())> _pump(
   return (container, () => location);
 }
 
-Booking _booking(String id) => Booking(
+Booking _booking(String id,
+        {BookingPayment payment = const BookingPayment()}) =>
+    Booking(
       id: id,
       title: 'Filter clean',
       appliance: Appliance.chimney,
@@ -144,6 +169,7 @@ Booking _booking(String id) => Booking(
       whenLabel: 'Today',
       addressLabel: 'Home',
       totalPaise: 49900,
+      payment: payment,
     );
 
 _Res _ok(List<Booking> b) => (bookings: b, shopOrderPlaced: false, error: null);
@@ -262,6 +288,127 @@ void main() {
     expect(checkout.opened, isEmpty);
     expect(repo.verifyCalls, isEmpty);
     expect(tester.widget<FilledButton>(_confirm).onPressed, isNotNull);
+  });
+
+  testWidgets(
+      'both payment choices are offered and the selection really changes the flow and button',
+      (tester) async {
+    final repo = _FakeRepo(verify: (_, __, ___) async => _fail('unused'));
+    await _pump(tester, repo);
+    expect(find.byKey(const Key('pay-choice-now')), findsOneWidget);
+    expect(find.byKey(const Key('pay-choice-after')), findsOneWidget);
+    expect(find.textContaining('Pay now · ₹'), findsOneWidget,
+        reason: 'Pay now is the default');
+    await tester.tap(find.byKey(const Key('pay-choice-after')));
+    await tester.pump();
+    expect(find.textContaining('Confirm booking · ₹'), findsOneWidget);
+    expect(find.textContaining('Pay now · ₹'), findsNothing);
+    await tester.tap(find.byKey(const Key('pay-choice-now')));
+    await tester.pump();
+    expect(find.textContaining('Pay now · ₹'), findsOneWidget);
+  });
+
+  testWidgets('customer-facing copy never mentions Razorpay', (tester) async {
+    final repo = _FakeRepo(verify: (_, __, ___) async => _fail('unused'));
+    await _pump(tester, repo);
+    expect(find.textContaining('Razorpay'), findsNothing);
+    await tester.tap(find.byKey(const Key('pay-choice-after')));
+    await tester.pump();
+    expect(find.textContaining('Razorpay'), findsNothing);
+    expect(find.textContaining('UPI'), findsWidgets);
+  });
+
+  testWidgets(
+      'Pay after service books with no payment and no Razorpay checkout',
+      (tester) async {
+    final repo = _FakeRepo(
+        verify: (_, __, ___) async => _fail('must not verify'))
+      ..cartHandler = () async => (bookings: [_booking('RC-77')], error: null);
+    final checkout = _FakeCheckout(_paid)..install();
+    final (_, loc) = await _pump(tester, repo);
+
+    await tester.tap(find.byKey(const Key('pay-choice-after')));
+    await tester.pump();
+    await tester.tap(_confirm);
+    await tester.pumpAndSettle();
+
+    expect(repo.cartCalls, hasLength(1));
+    expect(repo.cartCalls.single.mode, 'pay_after_service');
+    expect(repo.cartCalls.single.key, isNotNull);
+    expect(repo.orderCalls, 0,
+        reason: 'no Razorpay order for pay-after-service');
+    expect(checkout.opened, isEmpty);
+    expect(repo.verifyCalls, isEmpty);
+    expect(loc(), '/booking/RC-77/confirmed');
+  });
+
+  testWidgets(
+      'a failed Pay after service booking stays on screen and retries with the same key',
+      (tester) async {
+    var n = 0;
+    final repo = _FakeRepo(verify: (_, __, ___) async => _fail('unused'))
+      ..cartHandler = () async => n++ == 0
+          ? (
+              bookings: null,
+              error: 'No technician is available for this service yet'
+            )
+          : (bookings: [_booking('RC-79')], error: null);
+    _FakeCheckout(_paid).install();
+    await _pump(tester, repo);
+    await tester.tap(find.byKey(const Key('pay-choice-after')));
+    await tester.pump();
+
+    await tester.tap(_confirm);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('No technician is available for this service yet'),
+        findsOneWidget);
+    expect(find.textContaining('CONFIRMED'), findsNothing);
+    expect(tester.widget<FilledButton>(_confirm).onPressed, isNotNull);
+
+    await tester.pumpAndSettle(const Duration(seconds: 5));
+    await tester.tap(_confirm);
+    await tester.pumpAndSettle();
+    expect(repo.cartCalls, hasLength(2));
+    expect(repo.cartCalls[0].key, repo.cartCalls[1].key,
+        reason: 'retry must not duplicate the booking');
+    expect(find.text('CONFIRMED RC-79'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Pay after service is refused for shop kits, which are only sold prepaid',
+      (tester) async {
+    final repo = _FakeRepo(verify: (_, __, ___) async => _fail('unused'))
+      ..cartHandler = () async => (bookings: [_booking('RC-80')], error: null);
+    _FakeCheckout(_paid).install();
+    final (container, _) = await _pump(tester, repo);
+    container.read(shopCartProvider.notifier).setQty('chimney_kit', 1);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('pay-choice-after')));
+    await tester.pump();
+    await tester.tap(_confirm);
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Shop kits are paid online'), findsWidgets);
+    expect(repo.cartCalls, isEmpty);
+    expect(repo.orderCalls, 0);
+  });
+
+  testWidgets(
+      'Pay now never sends a payment mode of its own and never books without verification',
+      (tester) async {
+    final repo = _FakeRepo(
+        verify: (_, __, ___) async => _fail(
+            'Could not confirm payment status. Please retry verification.'));
+    _FakeCheckout(_paid).install();
+    await _pump(tester, repo);
+    await tester.tap(_confirm);
+    await tester.pump();
+    await tester.pump();
+    expect(repo.cartCalls, isEmpty,
+        reason: 'Pay now goes order -> checkout -> server verification only');
+    expect(repo.orderCalls, 1);
+    expect(find.textContaining('CONFIRMED'), findsNothing);
   });
 
   testWidgets('a thrown error shows a generic message, never the raw exception',

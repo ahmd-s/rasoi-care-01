@@ -162,6 +162,7 @@ class _TechJobScreenState extends ConsumerState<TechJobScreen> {
         'Requested' => t.jobDetailPrimaryAccept,
         'Accepted' => t.jobDetailPrimaryOnMyWay,
         'On the way' => t.jobDetailPrimaryArrived,
+        'Completed' => t.jobDetailPrimaryCollect,
         _ => t.jobDetailPrimaryComplete, // In Progress, Completed, null (mock)
       };
 
@@ -745,6 +746,31 @@ class _TechJobScreenState extends ConsumerState<TechJobScreen> {
                       ],
                     ),
                   ),
+                  if (repo is ApiRepository && repo.paymentOf(widget.jobId).mode != null) ...[
+                    const SizedBox(height: 12),
+                    Builder(builder: (context) {
+                      final pay = repo.paymentOf(widget.jobId);
+                      final settled = pay.isPaid || pay.duePaise <= 0;
+                      return CareCard(
+                        key: const Key('job-payment-banner'),
+                        child: Row(
+                          children: [
+                            Icon(settled ? Icons.check_circle : Icons.payments_outlined,
+                                color: settled ? context.care.success : context.scheme.primary),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                settled
+                                    ? t.jobPaymentPaid
+                                    : t.jobPaymentDue(Money.rupees(pay.duePaise)),
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
                   SectionHeader(t.jobDetailServiceHeader,
                       trailing: TextButton(
                         // Mirrors the backend's own gate in

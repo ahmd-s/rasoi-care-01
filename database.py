@@ -49,6 +49,8 @@ BOOKINGS_COLUMNS = (
     "cancellation_fee", "directions", "notes", "issues_json", "payment_method",
     "start_code", "before_photo_b64", "after_photo_b64", "signature_b64",
     "scheduled_at", "address_line", "brand", "model_number", "city",
+    # added by migrate_payment_columns
+    "payment_mode", "amount_paid_paise", "paid_at",
 )
 
 # The base64 job-photo/signature columns — up to 12MB (photos) / 4MB
@@ -241,8 +243,27 @@ CREATE TABLE IF NOT EXISTS razorpay_payment_intents (
     checkout_json   TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'created',
     response_json   TEXT,
+    payment_id      TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
+);
+
+-- Server-verified money received against a booking. kind 'qr' rows are the
+-- technician's dynamic invoice QR (one Razorpay QR code per row); a row only
+-- becomes 'paid' after the server has seen a captured payment for exactly the
+-- QR's amount, and razorpay_payment_id is unique so one payment can never be
+-- credited to two bookings.
+CREATE TABLE IF NOT EXISTS booking_payments (
+    id                  TEXT PRIMARY KEY,
+    booking_id          TEXT NOT NULL REFERENCES bookings(id),
+    kind                TEXT NOT NULL,
+    razorpay_ref        TEXT NOT NULL,
+    amount_paise        INTEGER NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'active',
+    razorpay_payment_id TEXT,
+    image_url           TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
 );
 
 -- Standalone Home Services app (separate from the RasoiCare tables
@@ -1303,6 +1324,7 @@ def _init_db_contents(conn):
     conn.executescript(SCHEMA)
     conn.commit()
     migrate_shop_orders_payment_order_id(conn)
+    migrate_payment_columns(conn)
     migrate_bookings_columns(conn)
     migrate_bookings_technician_nullable(conn)
     migrate_technicians_columns(conn)
@@ -1332,6 +1354,32 @@ def migrate_shop_orders_payment_order_id(conn):
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS shop_orders_payment_order_id_uq "
         "ON shop_orders(payment_order_id) WHERE payment_order_id IS NOT NULL"
+    )
+    conn.commit()
+
+
+def migrate_payment_columns(conn):
+    """Pay-now / pay-after-service tracking on bookings, the captured payment id
+    on payment intents, and the uniqueness guards on booking_payments."""
+    def add(table, column, ddl):
+        if DATABASE_URL:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
+        else:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+    add("bookings", "payment_mode", "TEXT")
+    add("bookings", "amount_paid_paise", "INTEGER NOT NULL DEFAULT 0")
+    add("bookings", "paid_at", "TEXT")
+    add("razorpay_payment_intents", "payment_id", "TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS booking_payments_payment_id_uq "
+        "ON booking_payments(razorpay_payment_id) WHERE razorpay_payment_id IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS booking_payments_one_active_qr_uq "
+        "ON booking_payments(booking_id) WHERE kind = 'qr' AND status = 'active'"
     )
     conn.commit()
 

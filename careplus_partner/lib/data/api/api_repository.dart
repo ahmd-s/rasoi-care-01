@@ -278,6 +278,65 @@ class ApiRepository implements PartnerRepository {
     }
   }
 
+  /// Asks the server for the live UPI QR for this completed job's exact
+  /// outstanding invoice amount (`POST .../payment-qr`). The server prices
+  /// it, creates the Razorpay QR and returns what to show — nothing here
+  /// decides the amount or whether anything is paid.
+  Future<PaymentStateDto> createInvoiceQr(String jobId) =>
+      _paymentCall('POST', 'payment-qr', jobId);
+
+  /// Re-checks payment (`GET .../payment`): the server asks Razorpay whether
+  /// the QR was paid and answers with the verified state.
+  Future<PaymentStateDto> refreshPayment(String jobId) =>
+      _paymentCall('GET', 'payment', jobId);
+
+  Future<PaymentStateDto> _paymentCall(String method, String path, String jobId) async {
+    const generic = PaymentStateDto(error: "Couldn't reach the payment service. Please try again.");
+    try {
+      final token = await _idToken();
+      if (token == null) return const PaymentStateDto(error: 'Please sign in again.');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/technician/bookings/$jobId/$path');
+      final headers = {'Authorization': 'Bearer $token'};
+      final res = await (method == 'POST'
+              ? http.post(uri, headers: headers)
+              : http.get(uri, headers: headers))
+          .timeout(_uploadTimeout);
+      final body = jsonDecode(res.body);
+      if (body is! Map<String, dynamic>) return generic;
+      if (res.statusCode != 200 && res.statusCode != 201) {
+        return PaymentStateDto(
+          error: (body['error'] as String?) ?? generic.error,
+          code: body['code'] as String?,
+        );
+      }
+      final payment = PaymentSummaryDto.fromJson(body['payment']);
+      final i = _bookings.indexWhere((b) => b.id == jobId);
+      if (i != -1) {
+        _bookings = [
+          ..._bookings.sublist(0, i),
+          _bookings[i].copyWith(
+            payment: payment,
+            paymentMethod: payment.isPaid ? 'upi' : null,
+          ),
+          ..._bookings.sublist(i + 1),
+        ];
+      }
+      return PaymentStateDto(
+        payment: payment,
+        qr: InvoiceQrDto.tryParse(body['qr']),
+        warning: body['warning'] as String?,
+      );
+    } catch (_) {
+      return generic;
+    }
+  }
+
+  /// The server-reported payment picture for [jobId] from the last fetch.
+  PaymentSummaryDto paymentOf(String jobId) {
+    final match = _bookings.where((b) => b.id == jobId);
+    return match.isEmpty ? const PaymentSummaryDto() : match.first.payment;
+  }
+
   /// Uploads the customer's captured signature (PNG bytes) via
   /// `PATCH /api/bookings/<id>/signature` — same reasoning as [uploadJobPhoto].
   Future<bool> uploadSignature(String jobId, Uint8List pngBytes) async {

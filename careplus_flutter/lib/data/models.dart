@@ -264,6 +264,42 @@ class ServiceChange {
       );
 }
 
+/// What the server says about paying for a booking. Derived on the server
+/// from verified payments only; the app never decides a booking is paid.
+class BookingPayment {
+  const BookingPayment({
+    this.mode,
+    this.status = 'unpaid',
+    this.invoicePaise = 0,
+    this.paidPaise = 0,
+    this.duePaise = 0,
+  });
+
+  /// `pay_now` or `pay_after_service`; null for older bookings.
+  final String? mode;
+
+  /// `paid`, `unpaid` or `cancelled`.
+  final String status;
+  final int invoicePaise;
+  final int paidPaise;
+  final int duePaise;
+
+  bool get isPaid => status == 'paid';
+  bool get isPayAfterService => mode == 'pay_after_service';
+
+  factory BookingPayment.fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return const BookingPayment();
+    int paise(String key) => (json[key] as num?)?.round() ?? 0;
+    return BookingPayment(
+      mode: json['mode'] as String?,
+      status: (json['status'] as String?) ?? 'unpaid',
+      invoicePaise: paise('invoicePaise'),
+      paidPaise: paise('paidPaise'),
+      duePaise: paise('duePaise'),
+    );
+  }
+}
+
 class Booking {
   const Booking({
     required this.id,
@@ -289,7 +325,11 @@ class Booking {
     this.modelNumber,
     this.parts = const [],
     this.serviceChanges = const [],
+    this.payment = const BookingPayment(),
   });
+
+  /// Pay now / pay after service, and what is still due.
+  final BookingPayment payment;
 
   final String id;
   final String title;

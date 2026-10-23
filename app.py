@@ -1099,6 +1099,31 @@ def fetch_booking_service_changes_bulk(conn, booking_ids):
     return by_booking
 
 
+def _payment_summary(row, parts=None):
+    """Money picture for a booking: invoice (service total + customer-approved
+    parts), what the server has verified as received, and what is still due.
+    `paid` only ever reflects amount_paid_paise, which is written solely by
+    the verified Razorpay paths — never by a client or technician tap."""
+    keys = row.keys()
+    total = row["total_amount"] if "total_amount" in keys and row["total_amount"] is not None else row["price"]
+    approved = sum(
+        p["pricePaise"] * p["qty"] for p in (parts or []) if p.get("status") == "approved"
+    )
+    invoice = (total or 0) * 100 + approved
+    paid = row["amount_paid_paise"] if "amount_paid_paise" in keys and row["amount_paid_paise"] else 0
+    cancelled = row["status"] == "Cancelled"
+    due = 0 if cancelled else max(invoice - paid, 0)
+    mode = row["payment_mode"] if "payment_mode" in keys else None
+    return {
+        "mode": mode,
+        "status": "cancelled" if cancelled else ("paid" if due == 0 else "unpaid"),
+        "invoicePaise": invoice,
+        "paidPaise": paid,
+        "duePaise": due,
+        "paidAt": row["paid_at"] if "paid_at" in keys else None,
+    }
+
+
 def booking_row_to_dict(
     row, *, include_start_code=False, parts=None, service_changes=None, redact_customer_contact=False
 ):
@@ -1151,6 +1176,10 @@ def booking_row_to_dict(
         "issues": json.loads(row["issues_json"])
         if ("issues_json" in keys and row["issues_json"]) else [],
         "paymentMethod": row["payment_method"] if "payment_method" in keys else None,
+        # Pay now vs pay after service, plus what is actually outstanding.
+        # Derived on the server from verified payments only — see
+        # _payment_summary.
+        "payment": _payment_summary(row, parts),
         # Set by the technician on-site once they've actually looked at the
         # appliance — see PATCH .../appliance. Null until then, never a
         # guessed value.
@@ -2350,6 +2379,15 @@ def bootstrap_customer():
     return jsonify(user_row_to_dict(row))
 
 
+class RazorpayError(RuntimeError):
+    """A failed Razorpay call. `status` is Razorpay's HTTP status (None for a
+    network failure); never carries request details or credentials."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
 def _razorpay_api(method, path, payload=None):
     """Call Razorpay from the server; secrets never leave this process."""
     if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
@@ -2371,7 +2409,9 @@ def _razorpay_api(method, path, payload=None):
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         # Do not log/return Razorpay's request details or any credentials.
-        raise RuntimeError(f"Razorpay request failed ({error.code})") from None
+        raise RazorpayError(f"Razorpay request failed ({error.code})", error.code) from None
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        raise RazorpayError("Razorpay request failed (network)") from None
 
 
 SHOP_PRODUCTS = {
@@ -2554,8 +2594,9 @@ def verify_razorpay_payment():
 
     conn = get_db()
     conn.execute(
-        "UPDATE razorpay_payment_intents SET status = 'payment_captured', updated_at = ? WHERE order_id = ? AND user_id = ?",
-        (now(), order_id, request.user["id"]),
+        "UPDATE razorpay_payment_intents SET status = 'payment_captured', payment_id = ?, updated_at = ? "
+        "WHERE order_id = ? AND user_id = ?",
+        (payment_id, now(), order_id, request.user["id"]),
     )
     conn.commit()
     conn.close()
@@ -3257,21 +3298,39 @@ def create_booking_cart():
     data = request.get_json(force=True, silent=True) or {}
     service_ids = data.get("serviceIds") or []
     use_coins = bool(data.get("useCoins"))
+    # Two ways to confirm a booking, chosen by the customer at checkout and
+    # enforced here (the client cannot pick "paid"): a captured Razorpay
+    # payment for exactly this cart (X-Razorpay-Order-Id), or an explicit
+    # paymentMode of "pay_after_service" with no payment, which is recorded
+    # as payable. Neither -> 402.
     payment_order_id = (request.headers.get("X-Razorpay-Order-Id") or "").strip()
-    if not payment_order_id:
-        return jsonify({"error": "Complete online payment before confirming this booking."}), 402
-    payment_conn = get_db()
-    payment_intent = payment_conn.execute(
-        "SELECT * FROM razorpay_payment_intents WHERE order_id = ? AND user_id = ? AND status IN ('payment_captured', 'complete')",
-        (payment_order_id, request.user["id"]),
-    ).fetchone()
-    payment_conn.close()
-    if not payment_intent:
-        return jsonify({"error": "Payment has not been confirmed for this booking."}), 402
-    paid_cart = json.loads(payment_intent["checkout_json"])
-    supplied_booking = {key: value for key, value in data.items() if key not in ("serviceIds", "useCoins")}
-    if use_coins or service_ids != paid_cart["serviceIds"] or supplied_booking != paid_cart["booking"]:
-        return jsonify({"error": "Booking details do not match the paid checkout."}), 409
+    requested_mode = data.get("paymentMode")
+    if requested_mode not in (None, "pay_now", "pay_after_service"):
+        return jsonify({"error": "Unknown payment option."}), 400
+    payment_intent = None
+    if payment_order_id:
+        if requested_mode == "pay_after_service":
+            return jsonify({"error": "Choose either online payment or pay after service, not both."}), 400
+        payment_conn = get_db()
+        payment_intent = payment_conn.execute(
+            "SELECT * FROM razorpay_payment_intents WHERE order_id = ? AND user_id = ? AND status IN ('payment_captured', 'complete')",
+            (payment_order_id, request.user["id"]),
+        ).fetchone()
+        payment_conn.close()
+        if not payment_intent:
+            return jsonify({"error": "Payment has not been confirmed for this booking."}), 402
+        paid_cart = json.loads(payment_intent["checkout_json"])
+        supplied_booking = {
+            key: value for key, value in data.items()
+            if key not in ("serviceIds", "useCoins", "paymentMode")
+        }
+        if use_coins or service_ids != paid_cart["serviceIds"] or supplied_booking != paid_cart["booking"]:
+            return jsonify({"error": "Booking details do not match the paid checkout."}), 409
+        payment_mode = "pay_now"
+    elif requested_mode == "pay_after_service":
+        payment_mode = "pay_after_service"
+    else:
+        return jsonify({"error": "Choose Pay now or Pay after service to confirm this booking."}), 402
     idem_key = (request.headers.get("Idempotency-Key") or "").strip() or None
     if idem_key is not None and not re.fullmatch(r"[A-Za-z0-9_\-]{8,64}", idem_key):
         return jsonify({"error": "Invalid Idempotency-Key"}), 400
@@ -3371,13 +3430,21 @@ def create_booking_cart():
             "INSERT INTO bookings (id, category, service, price, technician_id, customer_name, "
             "status, bachat_slot, service_rating, tech_rating, area, created_at, updated_at, "
             "user_id, service_id, total_amount, lat, lng, directions, notes, issues_json, "
-            "start_code, scheduled_at, address_line, city) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "start_code, scheduled_at, address_line, city, payment_mode, amount_paid_paise, paid_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (booking_id, category, service, price, None, request.user["name"],
              "Requested", None, None, None, area, ts, ts,
              request.user["id"], r["id"], price, lat, lng, directions,
-             notes, issues_json, start_code, scheduled_at, address_line, city),
+             notes, issues_json, start_code, scheduled_at, address_line, city,
+             payment_mode, price * 100 if payment_intent else 0, ts if payment_intent else None),
         )
+        if payment_intent:
+            conn.execute(
+                "INSERT INTO booking_payments (id, booking_id, kind, razorpay_ref, amount_paise, status, "
+                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                ("BP-" + secrets.token_hex(8), booking_id, "prepaid", payment_order_id,
+                 price * 100, "paid", ts, ts),
+            )
         created_ids.append((booking_id, service, start_code))
 
     bookings_out = []
@@ -3902,12 +3969,9 @@ def decline_booking(booking_id):
     "paymentMethod": Field(str, required=True, choices=("upi", "card", "cash", "link")),
 })
 def set_booking_payment(booking_id):
-    """Called by the Technician app's close-job screen once the customer's
-    actually paid. There's no payment gateway behind this (see
-    PaymentScreen in the Customer app) — collection is still UPI/cash to
-    the technician in person — but which method was used is now a real,
-    stored fact instead of a button that only showed a SnackBar and
-    recorded nothing."""
+    """Records a payment-method *label* only. It never marks anything paid:
+    payment status comes exclusively from server-verified Razorpay payments
+    (checkout verification or the invoice QR — see refresh_booking_payments)."""
     data = request.get_json(force=True, silent=True) or {}
     method = (data.get("paymentMethod") or "").strip()
     if method not in ("upi", "card", "cash", "link"):
@@ -3928,6 +3992,233 @@ def set_booking_payment(booking_id):
     row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
     conn.close()
     return jsonify(booking_row_to_dict(row))
+
+
+QR_EXPIRY_SECONDS = 110 * 60  # Razorpay caps a single-use QR at 2 hours
+
+
+def _razorpay_ready():
+    """None when Razorpay is configured and the key matches the mode, else a
+    (response, status) pair to return."""
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        return jsonify({"error": "Online payment is not configured yet. Please contact support."}), 503
+    if RAZORPAY_MODE not in ("test", "live") or (RAZORPAY_MODE == "test") != RAZORPAY_KEY_ID.startswith("rzp_test_"):
+        return jsonify({"error": "Payment key mode does not match the configured payment mode."}), 503
+    return None
+
+
+def _payment_row(conn, booking_id):
+    row = conn.execute(BOOKING_SELECT + " WHERE bookings.id = ?", (booking_id,)).fetchone()
+    parts = fetch_booking_parts(conn, booking_id) if row else []
+    return row, parts
+
+
+def _qr_payload(qr_row):
+    if not qr_row:
+        return None
+    return {
+        "qrId": qr_row["razorpay_ref"],
+        "imageUrl": qr_row["image_url"],
+        "amountPaise": qr_row["amount_paise"],
+        "status": qr_row["status"],
+        "createdAt": qr_row["created_at"],
+    }
+
+
+def _payment_response(conn, booking_id):
+    row, parts = _payment_row(conn, booking_id)
+    qr = conn.execute(
+        "SELECT * FROM booking_payments WHERE booking_id = ? AND kind = 'qr' "
+        "ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paid' THEN 1 ELSE 2 END, "
+        "created_at DESC, id DESC LIMIT 1", (booking_id,),
+    ).fetchone()
+    return {"bookingId": booking_id, "status": row["status"],
+            "payment": _payment_summary(row, parts), "qr": _qr_payload(qr)}
+
+
+def refresh_booking_payments(conn, booking_id):
+    """Ask Razorpay what was paid to this booking's active invoice QR and
+    credit it only if it is a captured INR payment for exactly the QR's
+    amount that no other booking has already been credited with. Returns
+    None on success or an error string. The caller commits."""
+    qr = conn.execute(
+        "SELECT * FROM booking_payments WHERE booking_id = ? AND kind = 'qr' AND status = 'active'",
+        (booking_id,),
+    ).fetchone()
+    if not qr:
+        return None
+    try:
+        listing = _razorpay_api("GET", "/payments/qr_codes/" + urllib.parse.quote(qr["razorpay_ref"], safe="") + "/payments?count=100")
+    except RuntimeError:
+        return "Could not check payment status right now. Please try again."
+    ts = now()
+    for item in (listing or {}).get("items") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        payment = item
+        try:
+            if payment.get("status") == "authorized":
+                _razorpay_api("POST", "/payments/" + urllib.parse.quote(payment["id"], safe="") + "/capture",
+                              {"amount": qr["amount_paise"], "currency": "INR"})
+                payment = _razorpay_api("GET", "/payments/" + urllib.parse.quote(payment["id"], safe=""))
+        except RuntimeError:
+            return "Could not confirm the payment right now. Please try again."
+        if (payment.get("status") != "captured" or payment.get("currency") != "INR"
+                or payment.get("amount") != qr["amount_paise"]):
+            continue  # wrong amount / not captured: never credited
+        try:
+            cur = conn.execute(
+                "UPDATE booking_payments SET status = 'paid', razorpay_payment_id = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'active'", (payment["id"], ts, qr["id"]),
+            )
+        except Exception:
+            conn.rollback()  # this payment id was already credited elsewhere (replay)
+            continue
+        if cur.rowcount == 1:
+            conn.execute(
+                "UPDATE bookings SET amount_paid_paise = amount_paid_paise + ?, paid_at = ?, "
+                "payment_method = 'upi', updated_at = ? WHERE id = ?",
+                (qr["amount_paise"], ts, ts, booking_id),
+            )
+        break
+    else:
+        if qr["created_at"] < (datetime.now(timezone.utc) - timedelta(seconds=QR_EXPIRY_SECONDS)).isoformat(
+                timespec="seconds").replace("+00:00", "Z"):
+            conn.execute("UPDATE booking_payments SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'active'",
+                         (ts, qr["id"]))
+    return None
+
+
+@app.route("/api/technician/bookings/<booking_id>/payment-qr", methods=["POST"])
+@require_technician_auth
+def create_invoice_payment_qr(booking_id):
+    """Create (or return the live) Razorpay UPI QR for exactly this booking's
+    outstanding invoice amount. Only the assigned technician, only once the
+    job is Completed and the final amount is known."""
+    conn = get_db()
+    row, parts = _payment_row(conn, booking_id)
+    if not row or row["technician_id"] != request.technician["id"]:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+    if row["status"] != "Completed":
+        conn.close()
+        return jsonify({"error": "Complete the job first — the QR is for the final invoice amount."}), 409
+    # Pick up any payment that already landed before deciding what is due.
+    not_ready = _razorpay_ready()
+    if not_ready:
+        conn.close()
+        return not_ready
+    problem = refresh_booking_payments(conn, booking_id)
+    conn.commit()
+    if problem:  # never replace a QR we could not check: it may already be paid
+        conn.close()
+        return jsonify({"error": problem}), 502
+    row, parts = _payment_row(conn, booking_id)
+    summary = _payment_summary(row, parts)
+    if summary["duePaise"] <= 0:
+        body = _payment_response(conn, booking_id)
+        conn.close()
+        return jsonify(body), 200
+    due = summary["duePaise"]
+    active = conn.execute(
+        "SELECT * FROM booking_payments WHERE booking_id = ? AND kind = 'qr' AND status = 'active'",
+        (booking_id,),
+    ).fetchone()
+    if active:
+        fresh = active["created_at"] >= (datetime.now(timezone.utc) - timedelta(seconds=QR_EXPIRY_SECONDS)).isoformat(
+            timespec="seconds").replace("+00:00", "Z")
+        if active["amount_paise"] == due and fresh:
+            body = _payment_response(conn, booking_id)
+            conn.close()
+            return jsonify(body), 200
+        try:  # amount changed or expired: retire it so the old code cannot be paid
+            _razorpay_api("POST", "/payments/qr_codes/" + urllib.parse.quote(active["razorpay_ref"], safe="") + "/close")
+        except RuntimeError:
+            conn.close()
+            return jsonify({"error": "Could not replace the old payment QR. Please try again."}), 502
+        conn.execute("UPDATE booking_payments SET status = 'closed', updated_at = ? WHERE id = ?", (now(), active["id"]))
+        conn.commit()
+    try:
+        qr = _razorpay_api("POST", "/payments/qr_codes", {
+            "type": "upi_qr",
+            "name": "Rasoi Care " + booking_id,
+            "usage": "single_use",
+            "fixed_amount": True,
+            "payment_amount": due,
+            "description": "Rasoi Care invoice " + booking_id,
+            "notes": {"booking_id": booking_id},
+        })
+    except RazorpayError as error:
+        conn.close()
+        if error.status in (400, 403, 404):
+            return jsonify({
+                "error": "UPI QR codes are not enabled on this payment account yet.",
+                "code": "qr_not_enabled",
+            }), 503
+        return jsonify({"error": "Could not create the payment QR. Please try again."}), 502
+    if not qr.get("id") or not qr.get("image_url"):
+        conn.close()
+        return jsonify({"error": "Could not create the payment QR. Please try again."}), 502
+    ts = now()
+    try:
+        conn.execute(
+            "INSERT INTO booking_payments (id, booking_id, kind, razorpay_ref, amount_paise, status, image_url, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("BP-" + secrets.token_hex(8), booking_id, "qr", qr["id"], due, "active", qr["image_url"], ts, ts),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()  # a concurrent request created the active QR first
+        try:
+            _razorpay_api("POST", "/payments/qr_codes/" + urllib.parse.quote(qr["id"], safe="") + "/close")
+        except RuntimeError:
+            pass
+    body = _payment_response(conn, booking_id)
+    conn.close()
+    return jsonify(body), 201
+
+
+@app.route("/api/technician/bookings/<booking_id>/payment", methods=["GET"])
+@require_technician_auth
+def technician_booking_payment(booking_id):
+    """Payment status for the assigned technician; checks Razorpay for a
+    payment on the active QR before answering."""
+    conn = get_db()
+    row, _parts = _payment_row(conn, booking_id)
+    if not row or row["technician_id"] != request.technician["id"]:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+    problem = None
+    if _razorpay_ready() is None:
+        problem = refresh_booking_payments(conn, booking_id)
+        conn.commit()
+    body = _payment_response(conn, booking_id)
+    conn.close()
+    if problem:
+        body["warning"] = problem
+    return jsonify(body)
+
+
+@app.route("/api/bookings/<booking_id>/payment", methods=["GET"])
+@require_auth
+def customer_booking_payment(booking_id):
+    """The customer's own view of what they owe / have paid. Other customers'
+    bookings are 404s; this never exposes anyone else's payment data."""
+    conn = get_db()
+    row, _parts = _payment_row(conn, booking_id)
+    if not row or row["user_id"] != request.user["id"]:
+        conn.close()
+        return jsonify({"error": "not found"}), 404
+    problem = None
+    if _razorpay_ready() is None:
+        problem = refresh_booking_payments(conn, booking_id)
+        conn.commit()
+    body = _payment_response(conn, booking_id)
+    conn.close()
+    body.pop("qr", None)  # the QR is the technician's collection tool
+    if problem:
+        body["warning"] = problem
+    return jsonify(body)
 
 
 # A booking can be cancelled at any of these statuses — not once it's

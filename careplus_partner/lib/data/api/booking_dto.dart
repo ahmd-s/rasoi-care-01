@@ -101,6 +101,93 @@ class ServiceOptionDto {
       );
 }
 
+/// What the server says about money for a booking. Everything here is derived
+/// server-side from verified payments — the app never computes "paid".
+class PaymentSummaryDto {
+  const PaymentSummaryDto({
+    this.mode,
+    this.status = 'unpaid',
+    this.invoicePaise = 0,
+    this.paidPaise = 0,
+    this.duePaise = 0,
+  });
+
+  /// `pay_now` (paid online at checkout) or `pay_after_service`; null on
+  /// bookings made before payment choice existed.
+  final String? mode;
+
+  /// `paid`, `unpaid` or `cancelled`.
+  final String status;
+  final int invoicePaise;
+  final int paidPaise;
+  final int duePaise;
+
+  bool get isPaid => status == 'paid';
+  bool get isPayAfterService => mode == 'pay_after_service';
+
+  factory PaymentSummaryDto.fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return const PaymentSummaryDto();
+    int paise(String key) => (json[key] as num?)?.round() ?? 0;
+    return PaymentSummaryDto(
+      mode: json['mode'] as String?,
+      status: (json['status'] as String?) ?? 'unpaid',
+      invoicePaise: paise('invoicePaise'),
+      paidPaise: paise('paidPaise'),
+      duePaise: paise('duePaise'),
+    );
+  }
+}
+
+/// The technician's live invoice QR as created by the server.
+class InvoiceQrDto {
+  const InvoiceQrDto({
+    required this.qrId,
+    required this.imageUrl,
+    required this.amountPaise,
+    required this.status,
+  });
+  final String qrId;
+  final String imageUrl;
+  final int amountPaise;
+
+  /// `active`, `paid`, `expired` or `closed`.
+  final String status;
+
+  static InvoiceQrDto? tryParse(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final id = json['qrId'];
+    final url = json['imageUrl'];
+    final amount = json['amountPaise'];
+    if (id is! String || url is! String || amount is! num) return null;
+    return InvoiceQrDto(
+      qrId: id,
+      imageUrl: url,
+      amountPaise: amount.round(),
+      status: (json['status'] as String?) ?? 'active',
+    );
+  }
+}
+
+/// Result of asking the server for / about a booking's invoice payment.
+class PaymentStateDto {
+  const PaymentStateDto({
+    this.payment = const PaymentSummaryDto(),
+    this.qr,
+    this.error,
+    this.code,
+    this.warning,
+  });
+  final PaymentSummaryDto payment;
+  final InvoiceQrDto? qr;
+
+  /// Human-safe failure message; null on success.
+  final String? error;
+
+  /// `qr_not_enabled` when the payment account cannot issue UPI QR codes.
+  final String? code;
+  final String? warning;
+}
+
 class BookingDto {
   const BookingDto({
     required this.id,
@@ -121,6 +208,7 @@ class BookingDto {
     this.issues = const [],
     this.customerPhone,
     this.paymentMethod,
+    this.payment = const PaymentSummaryDto(),
     this.beforePhotoReady = false,
     this.afterPhotoReady = false,
     this.signatureReady = false,
@@ -179,6 +267,9 @@ class BookingDto {
   /// How the customer actually paid, once the technician records it on the
   /// close-job screen — null until then. One of upi/card/cash/link.
   final String? paymentMethod;
+
+  /// Pay-now / pay-after-service state and the amount still to collect.
+  final PaymentSummaryDto payment;
 
   /// Whether a before/after photo or the customer's signature has already
   /// been uploaded via `PATCH /api/bookings/<id>/photo` (or `/signature`)
@@ -241,6 +332,7 @@ class BookingDto {
           ? json['customerPhone'] as String
           : null,
       paymentMethod: json['paymentMethod'] as String?,
+      payment: PaymentSummaryDto.fromJson(json['payment']),
       beforePhotoReady: json['beforePhotoReady'] == true,
       afterPhotoReady: json['afterPhotoReady'] == true,
       signatureReady: json['signatureReady'] == true,
@@ -268,6 +360,7 @@ class BookingDto {
     int? totalAmountPaise,
     String? status,
     String? paymentMethod,
+    PaymentSummaryDto? payment,
     bool? beforePhotoReady,
     bool? afterPhotoReady,
     bool? signatureReady,
@@ -295,6 +388,7 @@ class BookingDto {
         issues: issues,
         customerPhone: customerPhone,
         paymentMethod: paymentMethod ?? this.paymentMethod,
+        payment: payment ?? this.payment,
         beforePhotoReady: beforePhotoReady ?? this.beforePhotoReady,
         afterPhotoReady: afterPhotoReady ?? this.afterPhotoReady,
         signatureReady: signatureReady ?? this.signatureReady,

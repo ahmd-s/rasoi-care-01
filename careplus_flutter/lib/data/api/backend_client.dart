@@ -25,6 +25,24 @@ class BackendClient {
         'Content-Type': 'application/json',
       };
 
+  /// Asks the server to re-check a booking's payment (`GET /api/bookings/<id>/payment`).
+  Future<bool> checkBookingPayment({
+    required String idToken,
+    required String bookingId,
+  }) async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('${ApiConfig.baseUrl}/api/bookings/${Uri.encodeComponent(bookingId)}/payment'),
+            headers: _headers(idToken),
+          )
+          .timeout(_timeout);
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Creates a server-priced Razorpay order. The secret key is never sent to
   /// the app; only the public key id and Razorpay order id are returned.
   Future<({Map<String, dynamic>? order, String? error, bool unauthorized})>
@@ -242,6 +260,7 @@ class BackendClient {
     List<String>? issues,
     DateTime? scheduledAt,
     String? idempotencyKey,
+    String? paymentMode,
   }) async {
     try {
       final res = await http
@@ -254,14 +273,18 @@ class BackendClient {
             body: jsonEncode({
               'serviceIds': serviceIds,
               'useCoins': useCoins,
+              if (paymentMode != null) 'paymentMode': paymentMode,
               if (area != null && area.isNotEmpty) 'area': area,
-              if (addressLine != null && addressLine.isNotEmpty) 'addressLine': addressLine,
+              if (addressLine != null && addressLine.isNotEmpty)
+                'addressLine': addressLine,
               if (lat != null) 'lat': lat,
               if (lng != null) 'lng': lng,
-              if (directions != null && directions.isNotEmpty) 'directions': directions,
+              if (directions != null && directions.isNotEmpty)
+                'directions': directions,
               if (notes != null && notes.isNotEmpty) 'notes': notes,
               if (issues != null && issues.isNotEmpty) 'issues': issues,
-              if (scheduledAt != null) 'scheduledAt': scheduledAt.toUtc().toIso8601String(),
+              if (scheduledAt != null)
+                'scheduledAt': scheduledAt.toUtc().toIso8601String(),
             }),
           )
           .timeout(_checkoutTimeout);
