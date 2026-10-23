@@ -6,7 +6,7 @@ import pytest
 
 import app as app_module
 import database
-from conftest import auth_headers, register_and_login
+from conftest import add_payment_intent, auth_headers, register_and_login
 
 OWNER_EMAIL = "real-owner@example.com"
 CLAIMS = {
@@ -43,9 +43,16 @@ def _service(client):
     return s["id"], s["category"]
 
 
-def _cart(client, user, ids, **extra):
+def _paid(user, ids, **booking):
+    """Headers for a checkout that has a captured Razorpay payment matching
+    exactly this cart (the cart endpoint refuses anything unpaid)."""
+    order_id = add_payment_intent(user["user"]["id"], service_ids=ids, booking=booking)
+    return {**auth_headers(user["token"]), "X-Razorpay-Order-Id": order_id}
+
+
+def _cart(client, user, ids, headers=None, **extra):
     return client.post("/api/bookings/cart", json={"serviceIds": ids, "useCoins": False, **extra},
-                       headers=auth_headers(user["token"]))
+                       headers=headers or _paid(user, ids, **extra))
 
 
 def test_cart_requires_auth(client):
@@ -55,7 +62,7 @@ def test_cart_requires_auth(client):
 def test_cart_unknown_service_is_400_with_message(client):
     _tech(client, "tech-token")
     user = register_and_login(client)
-    resp = _cart(client, user, ["nope"])
+    resp = _cart(client, user, ["nope"])  # paid for, but the service id is unknown
     assert resp.status_code == 400 and resp.get_json()["error"]
 
 
@@ -157,15 +164,15 @@ def test_duplicate_submit_creates_one_booking_with_idempotency_key(client):
     sid, cat = _service(client)
     _tech(client, "tech-token", category=cat)
     user = register_and_login(client)
-    h = {**auth_headers(user["token"]), "Idempotency-Key": "abc-123-key"}
+    h = {**_paid(user, [sid]), "Idempotency-Key": "abc-123-key"}
     body = {"serviceIds": [sid], "useCoins": False}
     r1 = client.post("/api/bookings/cart", json=body, headers=h)
     r2 = client.post("/api/bookings/cart", json=body, headers=h)
     assert r1.status_code == 201 and r2.status_code == 201
     assert r1.get_json()["bookings"][0]["id"] == r2.get_json()["bookings"][0]["id"]
     assert len(client.get("/api/bookings", headers=auth_headers(user["token"])).get_json()) == 1
-    # A different key is a genuinely new order.
-    h2 = {**auth_headers(user["token"]), "Idempotency-Key": "another-key-1"}
+    # A different key is a genuinely new order (and needs its own payment).
+    h2 = {**_paid(user, [sid]), "Idempotency-Key": "another-key-1"}
     assert client.post("/api/bookings/cart", json=body, headers=h2).status_code == 201
     assert len(client.get("/api/bookings", headers=auth_headers(user["token"])).get_json()) == 2
 
@@ -181,29 +188,36 @@ def test_firebase_customer_without_backend_profile_gets_401_until_bootstrapped(c
         h = auth_headers("cust-token")
         assert client.post("/api/bookings/cart", json={"serviceIds": [sid]}, headers=h).status_code == 401
         assert client.post("/api/me/bootstrap", json={"name": "Cust"}, headers=h).status_code == 200
-        resp = client.post("/api/bookings/cart", json={"serviceIds": [sid]}, headers=h)
+        conn = database.get_db()
+        uid = conn.execute("SELECT id FROM users WHERE firebase_uid = 'cust-uid'").fetchone()["id"]
+        conn.close()
+        paid = {**h, "X-Razorpay-Order-Id": add_payment_intent(uid, service_ids=[sid])}
+        resp = client.post("/api/bookings/cart", json={"serviceIds": [sid]}, headers=paid)
         assert resp.status_code == 201 and resp.get_json()["bookings"][0]["id"].startswith("RC-")
     finally:
         CLAIMS.pop("cust-token", None)
 
 
-def test_replayed_checkout_does_not_redeem_coins_twice(client):
+def test_paid_checkout_cannot_redeem_care_coins(client):
+    """Care Coins can't be combined with online payment: the paid cart is
+    priced without coins, so asking to redeem them is refused outright and
+    the balance is untouched (this replaces the pre-payment coin-replay
+    test, whose flow no longer exists)."""
     sid, cat = _service(client)
     _tech(client, "tech-token", category=cat)
     user = register_and_login(client)
     conn = database.get_db()
     conn.execute("UPDATE users SET coins_balance = 100 WHERE email = ?", ("alice@example.com",))
     conn.commit(); conn.close()
-    h = {**auth_headers(user["token"]), "Idempotency-Key": "coins-key-0001"}
-    body = {"serviceIds": [sid], "useCoins": True}
-    first = client.post("/api/bookings/cart", json=body, headers=h).get_json()
-    again = client.post("/api/bookings/cart", json=body, headers=h).get_json()
-    assert first == again and first["pricing"]["coinsRedeemed"] == 100
+    h = {**_paid(user, [sid]), "Idempotency-Key": "coins-key-0001"}
+    resp = client.post("/api/bookings/cart", json={"serviceIds": [sid], "useCoins": True}, headers=h)
+    assert resp.status_code == 409
     me = client.get("/api/auth/me", headers=auth_headers(user["token"])).get_json()
-    assert me["coinsBalance"] == 0
+    assert me["coinsBalance"] == 100
+    assert client.get("/api/bookings", headers=auth_headers(user["token"])).get_json() == []
 
 
 def test_bad_idempotency_key_rejected(client):
     user = register_and_login(client)
-    h = {**auth_headers(user["token"]), "Idempotency-Key": "bad key!"}
+    h = {**_paid(user, ["x"]), "Idempotency-Key": "bad key!"}
     assert client.post("/api/bookings/cart", json={"serviceIds": ["x"]}, headers=h).status_code == 400

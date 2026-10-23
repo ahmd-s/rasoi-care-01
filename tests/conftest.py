@@ -119,3 +119,29 @@ def mock_firebase_claims(monkeypatch, *, uid, email=None, email_verified=False, 
             "sign_in_provider": sign_in_provider,
         },
     )
+
+
+def add_payment_intent(user_id, service_ids=(), booking=None, shop_items=(),
+                       status="payment_captured", order_id=None, amount_paise=100000):
+    """Inserts a Razorpay payment intent exactly as the order endpoint would
+    store it, so checkout tests can exercise the payment-required endpoints
+    without calling Razorpay. Returns the order id. `status` defaults to a
+    captured payment; pass "created" for an unpaid intent."""
+    import json
+    import uuid
+
+    order_id = order_id or "order_" + uuid.uuid4().hex[:14]
+    ts = database.now()
+    conn = database.get_db()
+    conn.execute(
+        "INSERT INTO razorpay_payment_intents "
+        "(order_id, user_id, amount_paise, checkout_json, status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (order_id, user_id, amount_paise,
+         json.dumps({"serviceIds": list(service_ids), "booking": booking or {},
+                     "shopItems": list(shop_items), "serviceTotalPaise": 0, "shopTotalPaise": 0}),
+         status, ts, ts),
+    )
+    conn.commit()
+    conn.close()
+    return order_id
