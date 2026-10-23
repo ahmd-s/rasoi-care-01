@@ -25,6 +25,90 @@ class BackendClient {
         'Content-Type': 'application/json',
       };
 
+  /// Creates a server-priced Razorpay order. The secret key is never sent to
+  /// the app; only the public key id and Razorpay order id are returned.
+  Future<({Map<String, dynamic>? order, String? error, bool unauthorized})>
+      createRazorpayOrder({
+    required String idToken,
+    required List<String> serviceIds,
+    required Map<String, dynamic> booking,
+    required List<Map<String, dynamic>> shopItems,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/payments/razorpay/order'),
+            headers: _headers(idToken),
+            body: jsonEncode({
+              'serviceIds': serviceIds,
+              'useCoins': false,
+              'booking': booking,
+              'shopItems': shopItems,
+            }),
+          )
+          .timeout(_checkoutTimeout);
+      final decoded = jsonDecode(res.body);
+      if (res.statusCode == 201 && decoded is Map<String, dynamic>) {
+        return (order: decoded, error: null, unauthorized: false);
+      }
+      return (
+        order: null,
+        error: decoded is Map<String, dynamic> && decoded['error'] is String
+            ? decoded['error'] as String
+            : 'Could not start secure payment.',
+        unauthorized: res.statusCode == 401,
+      );
+    } catch (_) {
+      return (
+        order: null,
+        error: 'Could not reach the payment server. Please try again.',
+        unauthorized: false
+      );
+    }
+  }
+
+  /// Server verifies the Razorpay signature and captured amount before
+  /// creating bookings or shop orders.
+  Future<({Map<String, dynamic>? result, String? error, bool unauthorized})>
+      verifyRazorpayPayment({
+    required String idToken,
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/api/payments/razorpay/verify'),
+            headers: _headers(idToken),
+            body: jsonEncode({
+              'orderId': orderId,
+              'paymentId': paymentId,
+              'signature': signature,
+            }),
+          )
+          .timeout(_checkoutTimeout);
+      final decoded = jsonDecode(res.body);
+      if (res.statusCode == 200 && decoded is Map<String, dynamic>) {
+        return (result: decoded, error: null, unauthorized: false);
+      }
+      return (
+        result: null,
+        error: decoded is Map<String, dynamic> && decoded['error'] is String
+            ? decoded['error'] as String
+            : 'Payment could not be confirmed. Keep this screen open and retry.',
+        unauthorized: res.statusCode == 401,
+      );
+    } catch (_) {
+      return (
+        result: null,
+        error:
+            'Payment confirmation is taking longer than expected. Please retry verification.',
+        unauthorized: false
+      );
+    }
+  }
+
   /// POST /api/me/bootstrap — called once right after Firebase sign-in so
   /// the backend has a matching `users` row; also reused by AccountScreen
   /// to set a phone number after the fact (the endpoint's own UPDATE is an

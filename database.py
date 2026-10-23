@@ -230,7 +230,19 @@ CREATE TABLE IF NOT EXISTS shop_orders (
     items_json      TEXT NOT NULL,
     total_paise     INTEGER NOT NULL,
     status          TEXT NOT NULL DEFAULT 'Placed',
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    payment_order_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS razorpay_payment_intents (
+    order_id        TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id),
+    amount_paise    INTEGER NOT NULL,
+    checkout_json   TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'created',
+    response_json   TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );
 
 -- Standalone Home Services app (separate from the RasoiCare tables
@@ -1290,6 +1302,7 @@ def _init_db_contents(conn):
         )
     conn.executescript(SCHEMA)
     conn.commit()
+    migrate_shop_orders_payment_order_id(conn)
     migrate_bookings_columns(conn)
     migrate_bookings_technician_nullable(conn)
     migrate_technicians_columns(conn)
@@ -1306,6 +1319,21 @@ def _init_db_contents(conn):
     # no-op once they're gone — so it's safe to run on every boot rather
     # than needing a one-time migration step.
     purge_demo_seed_rows(conn)
+
+
+def migrate_shop_orders_payment_order_id(conn):
+    """Add the payment reference used to make paid shop checkouts replay-safe."""
+    if DATABASE_URL:
+        conn.execute("ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS payment_order_id TEXT")
+    else:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(shop_orders)").fetchall()}
+        if "payment_order_id" not in columns:
+            conn.execute("ALTER TABLE shop_orders ADD COLUMN payment_order_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS shop_orders_payment_order_id_uq "
+        "ON shop_orders(payment_order_id) WHERE payment_order_id IS NOT NULL"
+    )
+    conn.commit()
 
 
 def next_id(conn, counter_name, prefix):

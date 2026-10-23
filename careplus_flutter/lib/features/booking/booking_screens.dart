@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../../core/widgets/care_widgets.dart';
 import '../../core/theme/care_plus_theme.dart';
@@ -512,26 +512,99 @@ class PaymentScreen extends ConsumerStatefulWidget {
 
 class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   bool _submitting = false;
+  late final Razorpay _razorpay;
+  String? _pendingOrderId;
+  PaymentSuccessResponse? _pendingPayment;
 
-  /// Places both halves of a possibly-mixed cart — real bookings for
-  /// [draft.services] and, if [shopCart] isn't empty, one real Shop order
-  /// for it too — from this single booking confirmation tap, so a kit and a repair visit
-  /// genuinely end up on the same bill instead of needing two separate
-  /// checkouts (see shopCartProvider's doc-comment in providers.dart for
-  /// why the cart itself lives at app scope). The two go through different
-  /// backend endpoints (bookings need a routed technician and a status
-  /// lifecycle; a Shop order doesn't), so this can partially succeed —
-  /// handled honestly below rather than claiming a single "you're all set"
-  /// when only one half actually went through.
-  // Reused across retries of the same checkout so a timeout-then-retry or a
-  // double tap can never create a second booking; cleared on success.
-  String? _idemKey;
-  static String _newIdemKey() =>
-      'co-${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 30)}';
+  @override
+  void initState() {
+    super.initState();
+    _razorpay = Razorpay()
+      ..on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess)
+      ..on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError);
+  }
 
-  Future<void> _pay(BookingDraft draft, PricingBreakdown pricing,
-      Map<String, int> shopCart) async {
+  @override
+  void dispose() {
+    _razorpay.clear();
+    super.dispose();
+  }
+
+  void _onPaymentSuccess(PaymentSuccessResponse response) {
+    _pendingPayment = response;
+    unawaited(_confirmPayment());
+  }
+
+  void _onPaymentError(PaymentFailureResponse response) {
+    if (!mounted) return;
+    setState(() {
+      _submitting = false;
+      _pendingOrderId = null;
+      _pendingPayment = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(response.message?.isNotEmpty == true
+          ? response.message!
+          : 'Payment was not completed. No booking was placed.'),
+    ));
+  }
+
+  Future<void> _confirmPayment() async {
+    final payment = _pendingPayment;
+    final orderId = _pendingOrderId;
+    if (payment == null || orderId == null) return;
+    final paymentId = payment.paymentId;
+    final signature = payment.signature;
+    if (paymentId == null || signature == null) {
+      if (mounted) setState(() => _submitting = false);
+      return;
+    }
+    final result = await ref.read(apiRepositoryProvider).verifyRazorpayPayment(
+          orderId: orderId,
+          paymentId: paymentId,
+          signature: signature,
+        );
+    if (!mounted) return;
+    if (result.error != null) {
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            '${result.error} Tap “Retry confirmation” to safely check again.'),
+      ));
+      return; // retain payment response: retry verifies it, never charges again
+    }
+    _pendingOrderId = null;
+    _pendingPayment = null;
+    setState(() => _submitting = false);
+    ref.read(shopCartProvider.notifier).clear();
+    final bookings = result.bookings ?? const <Booking>[];
+    if (bookings.isNotEmpty) {
+      context.go('/booking/${bookings.first.id}/confirmed',
+          extra: bookings.length);
+    } else if (result.shopOrderPlaced) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Payment confirmed and shop order placed.')),
+      );
+      context.go('/');
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Payment was confirmed, but no order details were returned. Contact support.')),
+      );
+    }
+  }
+
+  /// Starts one Razorpay checkout for this combined cart. The server prices
+  /// both parts and only creates booking/shop records after payment verifies.
+  Future<void> _pay(BookingDraft draft, Map<String, int> shopCart) async {
     if (_submitting) return;
+    if (_pendingPayment != null) {
+      setState(() => _submitting = true);
+      await _confirmPayment();
+      return;
+    }
     if (draft.services.isEmpty && shopCart.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.paymentEmptyCart)),
@@ -567,84 +640,71 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         for (final issue in draft.issues)
           if (issue.selected) issue.label,
       ];
-      var created = <Booking>[];
-      String? bookingError;
-      if (draft.services.isNotEmpty) {
-        final result = await ref.read(apiRepositoryProvider).createBookingCart(
-              services: draft.services,
-              useCoins: draft.useCoins,
-              areaLabel: selected?.label,
-              addressLine: selected?.line,
-              lat: selected?.lat,
-              lng: selected?.lng,
-              directions: directions.isEmpty ? null : directions,
-              notes: notes.isEmpty ? null : notes,
-              issues: selectedIssues,
-              scheduledAt: draft.scheduledAt,
-              idempotencyKey: _idemKey ??= _newIdemKey(),
-            );
-        if (result.bookings != null) {
-          created = result.bookings!;
-          _idemKey = null; // next checkout is a new order
-        }
-        bookingError = result.error;
+      if (draft.useCoins) {
+        if (!mounted) return;
+        setState(() => _submitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Turn off Care Coins to pay online. Care Coins are not available with Razorpay yet.'),
+        ));
+        return;
       }
-      int? shopOrderTotal;
-      String? shopError;
-      if (shopCart.isNotEmpty) {
-        final result =
-            await ref.read(apiRepositoryProvider).placeShopOrder(shopCart);
-        shopOrderTotal = result.totalPaise;
-        shopError = result.error;
-      }
-      if (!mounted) return;
-      setState(() => _submitting = false);
-
-      final bookingsWanted = draft.services.isNotEmpty;
-      final bookingsOk = !bookingsWanted || created.isNotEmpty;
-      final shopWanted = shopCart.isNotEmpty;
-      final shopOk = !shopWanted || shopOrderTotal != null;
-
-      final t = context.l10n;
-      final failures = <String>[
-        if (bookingsWanted && !bookingsOk)
-          bookingError ?? t.paymentBookingFailedHint,
-        if (shopWanted && !shopOk) shopError ?? t.paymentShopRetryHint,
+      final bookingPayload = <String, dynamic>{
+        if (selected?.label != null && selected!.label.isNotEmpty)
+          'area': selected.label,
+        if (selected?.line != null && selected!.line.isNotEmpty)
+          'addressLine': selected.line,
+        if (selected?.lat != null) 'lat': selected!.lat,
+        if (selected?.lng != null) 'lng': selected!.lng,
+        if (directions.isNotEmpty) 'directions': directions,
+        if (notes.isNotEmpty) 'notes': notes,
+        if (selectedIssues.isNotEmpty) 'issues': selectedIssues,
+        if (draft.scheduledAt != null)
+          'scheduledAt': draft.scheduledAt!.toUtc().toIso8601String(),
+      };
+      final shopItems = [
+        for (final item in shopCart.entries)
+          {'productId': item.key, 'qty': item.value},
       ];
-      final anyOrderSucceeded =
-          (bookingsWanted && bookingsOk) || (shopWanted && shopOk);
-      if (failures.isNotEmpty && !anyOrderSucceeded) {
-        // A booking-only checkout has no Shop total. Report failed requests
-        // before the Shop-success path below, which requires that total.
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(failures.join('\n'))));
-        return;
-      }
-      if (shopOk && shopWanted) ref.read(shopCartProvider.notifier).clear();
-
-      if (created.isNotEmpty) {
-        if (shopWanted && !shopOk) {
-          // Partial success: say exactly what didn't go through rather than
-          // staying silent about the half that failed.
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(t.paymentPartialShopFailed(
-                  shopError ?? t.paymentShopRetryHint))));
-        }
-        context.go('/booking/${created.first.id}/confirmed',
-            extra: created.length);
-        return;
-      }
-      // Nothing booked (either no services were selected, or booking creation
-      // failed) but the Shop order went through on its own.
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(bookingsWanted && !bookingsOk
-              ? t.paymentShopPlacedBookingFailed(Money.rupees(shopOrderTotal!),
-                  bookingError ?? t.paymentBookingFailedHint)
-              : t.paymentShopOrderPlaced(Money.rupees(shopOrderTotal!)))));
-      context.go('/');
-    } catch (error) {
+      final result = await ref.read(apiRepositoryProvider).createRazorpayOrder(
+            services: draft.services,
+            booking: bookingPayload,
+            shopItems: shopItems,
+          );
       if (!mounted) return;
-      setState(() => _submitting = false);
+      if (result.order == null) {
+        setState(() => _submitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(result.error ?? 'Could not start secure payment.'),
+        ));
+        return;
+      }
+      final order = result.order!;
+      _pendingOrderId = order['orderId'] as String?;
+      if (_pendingOrderId == null) {
+        setState(() => _submitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Payment server returned an invalid order. Please try again.'),
+        ));
+        return;
+      }
+      _razorpay.open({
+        'key': order['keyId'],
+        'order_id': order['orderId'],
+        'amount': order['amount'],
+        'currency': order['currency'],
+        'name': order['name'],
+        'description': order['description'],
+        'timeout': 300,
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _pendingOrderId = null;
+        _pendingPayment = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.paymentOrderError)),
       );
@@ -654,9 +714,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   @override
   Widget build(BuildContext context) {
     final draft = ref.watch(bookingDraftProvider);
-    final vm = ref.read(bookingDraftProvider.notifier);
-    final pricing = ref.watch(pricingProvider);
-    final coinsBalance = ref.watch(apiRepositoryProvider).coinsBalance;
+    final pricing =
+        computePricing(draft.services, useCoins: false, coinsBalance: 0);
     // A Shop cart added from ShopScreen rides along here rather than
     // needing its own separate checkout — see shopCartProvider's
     // doc-comment. Kit MRPs are the final, all-inclusive price (no visit
@@ -679,7 +738,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Eyebrow(t.paymentDueAfterVisit),
+              Eyebrow(_pendingPayment == null
+                  ? t.paymentDueAfterVisit
+                  : t.paymentRetryVerification),
               Text(Money.rupees(grandTotalPaise),
                   style: CareType.mono(context.scheme.onSurface,
                       size: 17, w: FontWeight.w600)),
@@ -687,14 +748,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         ),
         FilledButton(
-          onPressed: _submitting ? null : () => _pay(draft, pricing, shopCart),
+          onPressed: _submitting ? null : () => _pay(draft, shopCart),
           child: _submitting
               ? const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white))
-              : Text(t.paymentPayButton(Money.rupees(grandTotalPaise))),
+              : Text(_pendingPayment == null
+                  ? t.paymentPayButton(Money.rupees(grandTotalPaise))
+                  : t.paymentRetryVerification),
         ),
       ]),
       body: Column(
@@ -769,39 +832,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               ],
             ),
           ),
-          if (coinsBalance != null && coinsBalance > 0) ...[
-            const SizedBox(height: 12),
-            CareCard(
-              onTap: vm.toggleUseCoins,
-              child: Row(children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                      color: context.scheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: const Text('◍', style: TextStyle(fontSize: 14)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(t.paymentUseCoins,
-                          style: const TextStyle(
-                              fontSize: 13.5, fontWeight: FontWeight.w700)),
-                      Text(t.paymentCoinsAvailable('$coinsBalance'),
-                          style: context.type.bodySmall),
-                    ],
-                  ),
-                ),
-                Switch(
-                    value: draft.useCoins,
-                    onChanged: (_) => vm.toggleUseCoins()),
-              ]),
-            ),
-          ],
+          // Care Coins are intentionally hidden during Razorpay checkout
+          // until the server can safely reserve/refund them around payment.
           SectionHeader(t.paymentAfterVisitSection),
           CareCard(
             borderColor: context.scheme.primary,

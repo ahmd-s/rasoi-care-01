@@ -10,6 +10,8 @@ separate devices.
 import os
 import base64
 import json
+import hashlib
+import hmac
 import math
 import re
 import secrets
@@ -1419,6 +1421,9 @@ def get_bearer_token():
 # nothing about the web apps' auth changes.
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "rasoi-care")
 MAPS_SERVER_API_KEY = (os.environ.get("MAPS_SERVER_API_KEY") or "").strip()
+RAZORPAY_KEY_ID = (os.environ.get("RAZORPAY_KEY_ID") or "").strip()
+RAZORPAY_KEY_SECRET = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip()
+RAZORPAY_MODE = (os.environ.get("RAZORPAY_MODE") or "test").strip().lower()
 _GOOGLE_CERTS_URL = (
     "https://www.googleapis.com/robot/v1/metadata/x509/"
     "securetoken@system.gserviceaccount.com"
@@ -2345,6 +2350,30 @@ def bootstrap_customer():
     return jsonify(user_row_to_dict(row))
 
 
+def _razorpay_api(method, path, payload=None):
+    """Call Razorpay from the server; secrets never leave this process."""
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise RuntimeError("Razorpay is not configured on the server")
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        "https://api.razorpay.com/v1" + path,
+        data=body,
+        method=method,
+        headers={
+            "Authorization": "Basic " + base64.b64encode(
+                f"{RAZORPAY_KEY_ID}:{RAZORPAY_KEY_SECRET}".encode("utf-8")
+            ).decode("ascii"),
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        # Do not log/return Razorpay's request details or any credentials.
+        raise RuntimeError(f"Razorpay request failed ({error.code})") from None
+
+
 SHOP_PRODUCTS = {
     "chimney_kit": {"name": "Chimney Cleaning Kit", "price_paise": 14900},
     "cooktop_kit": {"name": "Cooktop & Hob Cleaning Kit", "price_paise": 11900},
@@ -2352,6 +2381,215 @@ SHOP_PRODUCTS = {
     "microwave_kit": {"name": "Microwave Cleaning Kit", "price_paise": 11900},
     "refrigerator_kit": {"name": "Refrigerator Cleaning Kit", "price_paise": 9900},
 }
+
+
+@app.route("/api/payments/razorpay/order", methods=["POST"])
+@require_auth
+@validate_json({
+    "serviceIds": Field(list, max_len=20, item_type=str),
+    "useCoins": Field(bool),
+    "shopItems": Field(list, max_len=50, item_type=dict),
+    "booking": Field(dict),
+})
+def create_razorpay_order():
+    """Create a server-priced Razorpay order for the combined checkout."""
+    data = request.get_json(force=True, silent=True) or {}
+    service_ids = data.get("serviceIds") or []
+    shop_items = data.get("shopItems") or []
+    booking = data.get("booking") or {}
+    if not service_ids and not shop_items:
+        return jsonify({"error": "Your cart is empty."}), 400
+    if data.get("useCoins"):
+        return jsonify({"error": "Care Coins cannot be combined with online payment yet. Turn off Use Care Coins and try again."}), 400
+    if service_ids and not booking:
+        return jsonify({"error": "Booking details are missing."}), 400
+    if bool(service_ids) != bool(booking):
+        return jsonify({"error": "Booking details do not match the selected services."}), 400
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        return jsonify({"error": "Online payment is not configured yet. Please contact support."}), 503
+    if RAZORPAY_MODE not in ("test", "live") or (RAZORPAY_MODE == "test") != RAZORPAY_KEY_ID.startswith("rzp_test_"):
+        return jsonify({"error": "Payment key mode does not match the configured payment mode."}), 503
+    booking_fields = {
+        "scheduledAt": Field(str, max_len=40, pattern=ISO_DATETIME_RE, strip=False),
+        "area": Field(str, max_len=200),
+        "addressLine": Field(str, max_len=300),
+        "lat": Field(NUMBER, min_val=-90, max_val=90),
+        "lng": Field(NUMBER, min_val=-180, max_val=180),
+        "directions": Field(str, max_len=500),
+        "notes": Field(str, max_len=2000),
+        "issues": Field(list, max_len=30, item_type=str),
+    }
+    invalid_booking = {
+        name: field.validate(value)
+        for name, field in booking_fields.items()
+        if (value := booking.get(name)) is not None and field.validate(value)
+    }
+    if invalid_booking:
+        return jsonify({"error": "Invalid booking details.", "fields": invalid_booking}), 400
+
+    conn = get_db()
+    service_rows = []
+    for service_id in service_ids:
+        row = conn.execute(SERVICE_SELECT + " WHERE services.id = ?", (service_id,)).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": f"Unknown serviceId: {service_id}"}), 400
+        service_rows.append(row)
+    if service_rows and conn.execute("SELECT 1 FROM technicians LIMIT 1").fetchone() is None:
+        conn.close()
+        return jsonify({"error": "No technician is available for this service yet."}), 503
+    service_subtotal = sum(row["price"] for row in service_rows)
+    if service_rows:
+        before_gst = service_subtotal + CART_VISIT_FEE
+        coupon = CART_COUPON_DISCOUNT if before_gst > CART_COUPON_THRESHOLD else 0
+        service_total = before_gst - coupon
+        service_total += round(service_total * CART_GST_RATE)
+    else:
+        service_total = 0
+
+    normalized_shop = []
+    shop_total = 0
+    for entry in shop_items:
+        product_id = entry.get("productId") if isinstance(entry, dict) else None
+        product = SHOP_PRODUCTS.get(product_id)
+        try:
+            quantity = int(entry.get("qty", 0))
+        except (TypeError, ValueError):
+            quantity = 0
+        if not product or quantity <= 0 or quantity > 50:
+            conn.close()
+            return jsonify({"error": "The shop cart contains an invalid item or quantity."}), 400
+        normalized_shop.append({"productId": product_id, "qty": quantity})
+        shop_total += product["price_paise"] * quantity
+    if len({item["productId"] for item in normalized_shop}) != len(normalized_shop):
+        conn.close()
+        return jsonify({"error": "The shop cart contains duplicate items."}), 400
+
+    amount_paise = service_total * 100 + shop_total
+    if amount_paise <= 0:
+        conn.close()
+        return jsonify({"error": "The amount must be greater than zero."}), 400
+    order_idempotency = "rc-" + uuid.uuid4().hex
+    try:
+        rz_order = _razorpay_api("POST", "/orders", {
+            "amount": amount_paise,
+            "currency": "INR",
+            "receipt": order_idempotency[:40],
+            "notes": {"user_id": str(request.user["id"])[:200]},
+        })
+    except RuntimeError:
+        conn.close()
+        return jsonify({"error": "Could not start payment. Please try again."}), 502
+    created_at = now()
+    payload = {
+        "serviceIds": service_ids,
+        "booking": booking,
+        "shopItems": normalized_shop,
+        "serviceTotalPaise": service_total * 100,
+        "shopTotalPaise": shop_total,
+    }
+    conn.execute(
+        "INSERT INTO razorpay_payment_intents (order_id, user_id, amount_paise, checkout_json, status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (rz_order["id"], request.user["id"], amount_paise, json.dumps(payload), "created", created_at, created_at),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "keyId": RAZORPAY_KEY_ID,
+        "orderId": rz_order["id"],
+        "amount": amount_paise,
+        "currency": "INR",
+        "name": "Rasoi Care",
+        "description": "Rasoi Care checkout",
+    }), 201
+
+
+@app.route("/api/payments/razorpay/verify", methods=["POST"])
+@require_auth
+@validate_json({
+    "orderId": Field(str, required=True, max_len=100),
+    "paymentId": Field(str, required=True, max_len=100),
+    "signature": Field(str, required=True, max_len=256),
+})
+def verify_razorpay_payment():
+    """Verify HMAC and captured status, then idempotently fulfil the paid cart."""
+    data = request.get_json(force=True, silent=True) or {}
+    order_id, payment_id, signature = data["orderId"], data["paymentId"], data["signature"]
+    conn = get_db()
+    intent = conn.execute(
+        "SELECT * FROM razorpay_payment_intents WHERE order_id = ? AND user_id = ?",
+        (order_id, request.user["id"]),
+    ).fetchone()
+    if not intent:
+        conn.close()
+        return jsonify({"error": "This payment order does not belong to your account."}), 404
+    if intent["status"] == "complete" and intent["response_json"]:
+        response = json.loads(intent["response_json"])
+        conn.close()
+        if response.get("paymentId") != payment_id:
+            return jsonify({"error": "This payment reference does not match the completed order."}), 409
+        return jsonify(response), 200
+    conn.close()
+
+    expected = hmac.new(
+        RAZORPAY_KEY_SECRET.encode("utf-8"),
+        f"{order_id}|{payment_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return jsonify({"error": "Payment verification failed. No order was placed."}), 400
+    try:
+        payment = _razorpay_api("GET", "/payments/" + urllib.parse.quote(payment_id, safe=""))
+        if payment.get("order_id") == order_id and payment.get("status") == "authorized":
+            _razorpay_api("POST", "/payments/" + urllib.parse.quote(payment_id, safe="") + "/capture", {
+                "amount": intent["amount_paise"], "currency": "INR",
+            })
+            payment = _razorpay_api("GET", "/payments/" + urllib.parse.quote(payment_id, safe=""))
+    except RuntimeError:
+        return jsonify({"error": "Could not confirm payment status. Please retry verification."}), 502
+    if (payment.get("order_id") != order_id or payment.get("status") != "captured"
+            or payment.get("amount") != intent["amount_paise"] or payment.get("currency") != "INR"):
+        return jsonify({"error": "Payment is not captured for this checkout. No order was placed."}), 402
+
+    conn = get_db()
+    conn.execute(
+        "UPDATE razorpay_payment_intents SET status = 'payment_captured', updated_at = ? WHERE order_id = ? AND user_id = ?",
+        (now(), order_id, request.user["id"]),
+    )
+    conn.commit()
+    conn.close()
+    checkout = json.loads(intent["checkout_json"])
+    auth_header = request.headers.get("Authorization", "")
+    results = {"bookings": [], "shopOrder": None}
+    with app.test_client() as client:
+        if checkout["serviceIds"]:
+            booking_data = dict(checkout["booking"])
+            booking_data.update({"serviceIds": checkout["serviceIds"], "useCoins": False})
+            response = client.post(
+                "/api/bookings/cart", json=booking_data,
+                headers={"Authorization": auth_header, "Idempotency-Key": "rz-" + order_id[-32:], "X-Razorpay-Order-Id": order_id},
+            )
+            if response.status_code not in (200, 201):
+                return jsonify({"error": "Payment was captured, but booking confirmation needs a retry. Contact support if this continues."}), 503
+            results["bookings"] = (response.get_json() or {}).get("bookings", [])
+        if checkout["shopItems"]:
+            response = client.post(
+                "/api/shop/orders", json={"items": checkout["shopItems"], "paymentOrderId": order_id},
+                headers={"Authorization": auth_header},
+            )
+            if response.status_code not in (200, 201):
+                return jsonify({"error": "Payment was captured, but shop order confirmation needs a retry. Contact support if this continues."}), 503
+            results["shopOrder"] = response.get_json()
+    results["paymentId"] = payment_id
+    conn = get_db()
+    conn.execute(
+        "UPDATE razorpay_payment_intents SET status = 'complete', response_json = ?, updated_at = ? WHERE order_id = ?",
+        (json.dumps(results), now(), order_id),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(results), 200
 
 
 @app.route("/api/shop/orders", methods=["POST"])
@@ -2362,13 +2600,38 @@ SHOP_PRODUCTS = {
 def create_shop_order():
     """Places a real order for one or more cleaning kits — prices are looked
     up from SHOP_PRODUCTS server-side (never trusted from the client) so a
-    tampered request can't under-charge. No payment gateway exists in this
-    codebase (see PaymentScreen), so like bookings this is pay-on-delivery:
-    placing the order just records it for fulfillment."""
+    tampered request can't under-charge. The order must be attached to a
+    captured Razorpay checkout intent, and its contents must match the paid
+    cart snapshot."""
     data = request.get_json(force=True, silent=True) or {}
+    payment_order_id = (data.get("paymentOrderId") or "").strip()
+    if not payment_order_id:
+        return jsonify({"error": "Complete online payment before placing this order."}), 402
+    conn = get_db()
+    intent = conn.execute(
+        "SELECT * FROM razorpay_payment_intents WHERE order_id = ? AND user_id = ?",
+        (payment_order_id, request.user["id"]),
+    ).fetchone()
+    if not intent or intent["status"] not in ("payment_captured", "complete"):
+        conn.close()
+        return jsonify({"error": "Payment has not been confirmed for this order."}), 402
+    prior_order = conn.execute(
+        "SELECT * FROM shop_orders WHERE payment_order_id = ? AND user_id = ?",
+        (payment_order_id, request.user["id"]),
+    ).fetchone()
+    conn.close()
+    if prior_order:
+        return jsonify(shop_order_row_to_dict(prior_order)), 201
+    intent_payload = json.loads(intent["checkout_json"])
+    expected_items = sorted(intent_payload.get("shopItems", []), key=lambda item: item["productId"])
     items = data.get("items")
     if not isinstance(items, list) or not items:
         return jsonify({"error": "items must be a non-empty list"}), 400
+    if any(not isinstance(item, dict) for item in items):
+        return jsonify({"error": "items must contain product objects"}), 400
+    requested_items = sorted(items, key=lambda item: item.get("productId", ""))
+    if requested_items != expected_items:
+        return jsonify({"error": "Shop cart does not match the paid order."}), 409
 
     order_items = []
     total_paise = 0
@@ -2396,9 +2659,9 @@ def create_shop_order():
     order_id = new_uuid_id("ORD")
     conn = get_db()
     conn.execute(
-        "INSERT INTO shop_orders (id, user_id, items_json, total_paise, status, created_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (order_id, request.user["id"], json.dumps(order_items), total_paise, "Placed", now()),
+        "INSERT INTO shop_orders (id, user_id, items_json, total_paise, status, created_at, payment_order_id) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (order_id, request.user["id"], json.dumps(order_items), total_paise, "Placed", now(), payment_order_id),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM shop_orders WHERE id = ?", (order_id,)).fetchone()
@@ -2994,6 +3257,21 @@ def create_booking_cart():
     data = request.get_json(force=True, silent=True) or {}
     service_ids = data.get("serviceIds") or []
     use_coins = bool(data.get("useCoins"))
+    payment_order_id = (request.headers.get("X-Razorpay-Order-Id") or "").strip()
+    if not payment_order_id:
+        return jsonify({"error": "Complete online payment before confirming this booking."}), 402
+    payment_conn = get_db()
+    payment_intent = payment_conn.execute(
+        "SELECT * FROM razorpay_payment_intents WHERE order_id = ? AND user_id = ? AND status IN ('payment_captured', 'complete')",
+        (payment_order_id, request.user["id"]),
+    ).fetchone()
+    payment_conn.close()
+    if not payment_intent:
+        return jsonify({"error": "Payment has not been confirmed for this booking."}), 402
+    paid_cart = json.loads(payment_intent["checkout_json"])
+    supplied_booking = {key: value for key, value in data.items() if key not in ("serviceIds", "useCoins")}
+    if use_coins or service_ids != paid_cart["serviceIds"] or supplied_booking != paid_cart["booking"]:
+        return jsonify({"error": "Booking details do not match the paid checkout."}), 409
     idem_key = (request.headers.get("Idempotency-Key") or "").strip() or None
     if idem_key is not None and not re.fullmatch(r"[A-Za-z0-9_\-]{8,64}", idem_key):
         return jsonify({"error": "Invalid Idempotency-Key"}), 400

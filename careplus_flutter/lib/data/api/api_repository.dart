@@ -51,6 +51,84 @@ class ApiRepository implements CareRepository {
   int? _coinsBalance;
   int? get coinsBalance => _coinsBalance;
 
+  Future<({Map<String, dynamic>? order, String? error})> createRazorpayOrder({
+    required List<ServiceItem> services,
+    required Map<String, dynamic> booking,
+    required List<Map<String, dynamic>> shopItems,
+  }) async {
+    var token = await _idToken();
+    if (token == null)
+      return (order: null, error: 'You need to be signed in to pay.');
+    var result = await _client.createRazorpayOrder(
+      idToken: token,
+      serviceIds: [for (final service in services) service.id],
+      booking: booking,
+      shopItems: shopItems,
+    );
+    if (result.unauthorized) {
+      await _ensureBackendProfile();
+      token = await _idToken(forceRefresh: true);
+      if (token != null) {
+        result = await _client.createRazorpayOrder(
+          idToken: token,
+          serviceIds: [for (final service in services) service.id],
+          booking: booking,
+          shopItems: shopItems,
+        );
+      }
+    }
+    return (order: result.order, error: result.error);
+  }
+
+  Future<({List<Booking>? bookings, bool shopOrderPlaced, String? error})>
+      verifyRazorpayPayment({
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) async {
+    var token = await _idToken();
+    if (token == null)
+      return (
+        bookings: null,
+        shopOrderPlaced: false,
+        error: 'Sign in again to confirm this payment.'
+      );
+    var result = await _client.verifyRazorpayPayment(
+      idToken: token,
+      orderId: orderId,
+      paymentId: paymentId,
+      signature: signature,
+    );
+    if (result.unauthorized) {
+      token = await _idToken(forceRefresh: true);
+      if (token != null) {
+        result = await _client.verifyRazorpayPayment(
+          idToken: token,
+          orderId: orderId,
+          paymentId: paymentId,
+          signature: signature,
+        );
+      }
+    }
+    if (result.result == null) {
+      return (bookings: null, shopOrderPlaced: false, error: result.error);
+    }
+    final rawBookings = result.result!['bookings'] as List? ?? const [];
+    final bookings = [
+      for (final raw in rawBookings.whereType<Map<String, dynamic>>())
+        if (raw['id'] is String) _bookingFromJson(raw),
+    ];
+    if (bookings.isNotEmpty) {
+      _realBookings = [...(_realBookings ?? []), ...bookings];
+      onBookingsChanged?.call();
+    }
+    return (
+      bookings: bookings,
+      shopOrderPlaced: result.result!['shopOrder'] is Map<String, dynamic>,
+      error: null,
+    );
+  }
+
   Future<String?> _idToken({bool forceRefresh = false}) async {
     if (Firebase.apps.isEmpty) return null; // mock auth mode — nothing to send
     try {
