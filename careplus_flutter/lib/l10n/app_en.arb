@@ -17,6 +17,8 @@
   "@homeLastDone": {"placeholders": {"when": {"type": "String"}}},
   "homeRebook": "Rebook",
   "homeMostBooked": "Most booked",
+  "homePassportEyebrow": "CUSTOMER KITCHEN",
+  "homePassportDescription": "Your appliances, service history and care recommendations.",
 
   "notificationsTitle": "Notifications",
   "notificationsBody": "There's no real notifications system set up yet — no push alerts, no in-app feed. We'd rather show nothing here than a made-up badge count.",
@@ -270,6 +272,8 @@
   "addressDetailsPhotoHeader": "Location photo (recommended)",
   "addressDetailsPhotoHint": "Helps the technician recognize the entrance.",
   "addressDetailsAddPhoto": "Add a photo",
+  "addressDetailsTakePhoto": "Take a photo",
+  "addressDetailsChooseGallery": "Choose from gallery",
   "mapPickerSearchHint": "Search for an area or landmark",
   "mapPickerUseCurrentLocation": "Use my current location",
   "mapPickerSearchError": "Address search isn't working right now.",

@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 
-/// The supplied Rasoi Care logo, shown exactly as provided (black artwork
-/// background, not cropped, recoloured or redrawn). Used on brand surfaces
-/// only: splash and sign-in — not on every functional screen.
+/// The supplied Rasoi Care primary logo, used consistently on brand surfaces.
 class BrandLogo extends StatelessWidget {
   const BrandLogo({super.key, this.size = 96, this.rounded = true});
   final double size;
   final bool rounded;
 
-  static const asset = 'assets/brand/rasoi_care_logo.jpg';
+  static const asset = 'assets/brand/rasoi_care_primary_logo_transparent.png';
 
   @override
   Widget build(BuildContext context) {

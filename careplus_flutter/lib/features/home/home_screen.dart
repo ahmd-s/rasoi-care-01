@@ -31,10 +31,6 @@ class HomeScreen extends ConsumerWidget {
         ? profile!.name
         : (isMock ? 'Rohan Deshpande' : '');
     final repo = ref.watch(repositoryProvider);
-    final chimneyServices = repo.servicesFor(Appliance.chimney);
-    final heroService = chimneyServices.isEmpty
-        ? null
-        : chimneyServices.firstWhere((s) => s.mostBooked, orElse: () => chimneyServices.first);
     // Rebuild once ApiRepository's real-booking cache lands, same signal
     // BookingsScreen watches — otherwise this stays empty until some other
     // screen happens to trigger a rebuild first.
@@ -105,14 +101,13 @@ class HomeScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  // --- hero ---
-                  if (heroService != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: _HeroBanner(
-                          service: heroService,
-                          onTap: () => _startBooking(context, ref, Appliance.chimney)),
+                  // --- customer kitchen passport ---
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _KitchenPassportBanner(
+                      onTap: () => context.go('/passport'),
                     ),
+                  ),
                   // --- categories ---
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -236,15 +231,9 @@ String _initialsOf(String name) {
   return (first + last).toUpperCase();
 }
 
-/// Promotes the most-booked chimney service with its real catalog price —
-/// previously a fixed "₹1,199 ~~₹1,599~~ Save 25%" that didn't correspond
-/// to any actual service: the ₹1,599 happened to match this service's real
-/// price, but the "sale" price and the 25%-off badge next to it were both
-/// invented, and tapping through led to the generic catalog with no such
-/// discount waiting there.
-class _HeroBanner extends StatelessWidget {
-  const _HeroBanner({required this.service, required this.onTap});
-  final ServiceItem service;
+/// Promotes the customer's Kitchen Passport from the home screen.
+class _KitchenPassportBanner extends StatelessWidget {
+  const _KitchenPassportBanner({required this.onTap});
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Pressable(
@@ -253,31 +242,29 @@ class _HeroBanner extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
               color: context.scheme.primary, borderRadius: Radii.rLg),
-          padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.fromLTRB(20, 20, 18, 20),
+          child: Row(
             children: [
-              Eyebrow(context.l10n.homeMostBooked, color: context.scheme.secondary),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: 240,
-                child: Text('${service.title}, ${service.durationMin} min',
-                    style: CareType.display(context.scheme.onPrimary, size: 27)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Eyebrow(context.l10n.homePassportEyebrow,
+                        color: context.scheme.secondary),
+                    const SizedBox(height: 8),
+                    Text(context.l10n.passportTitle,
+                        style: CareType.display(context.scheme.onPrimary, size: 27)),
+                    const SizedBox(height: 8),
+                    Text(context.l10n.homePassportDescription,
+                        style: context.type.bodyMedium?.copyWith(
+                          color: context.scheme.onPrimary.withValues(alpha: 0.82),
+                        )),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              Row(children: [
-                Text(Money.rupees(service.pricePaise),
-                    style: CareType.mono(context.scheme.onPrimary,
-                        size: 19, w: FontWeight.w600)),
-                if (service.strikePaise != null) ...[
-                  const SizedBox(width: 10),
-                  Text(Money.rupees(service.strikePaise!),
-                      style: CareType.mono(
-                              context.scheme.onPrimary.withValues(alpha: 0.55),
-                              size: 12)
-                          .copyWith(decoration: TextDecoration.lineThrough)),
-                ],
-              ]),
+              const SizedBox(width: 12),
+              Icon(Icons.arrow_forward_rounded,
+                  color: context.scheme.onPrimary, size: 24),
             ],
           ),
         ),

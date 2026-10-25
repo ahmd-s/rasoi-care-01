@@ -80,26 +80,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.l10n;
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const BrandLogo(size: 220, rounded: false),
-            const SizedBox(height: 8),
-            Text(t.splashPartnerBadge,
-                style: CareType.mono(CareColors.brass, size: 13)
-                    .copyWith(letterSpacing: 4, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 20),
-            Text(t.splashTagline,
-                textAlign: TextAlign.center,
-                style: CareType.mono(CareColors.porcelain.withValues(alpha: 0.6), size: 10)
-                    .copyWith(letterSpacing: 2.2, height: 1.6)),
-          ],
-        ),
-      ),
+      backgroundColor: Colors.white,
+      body: const Center(child: BrandLogo(size: 240, rounded: false)),
     );
   }
 }

@@ -112,7 +112,7 @@ class ServiceDetailScreen extends ConsumerStatefulWidget {
 class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
   final Set<String> _selectedIds = {};
   final Set<String> _expandedIncluded = {};
-  bool _seeded = false;
+  Appliance? _seededAppliance;
 
   @override
   Widget build(BuildContext context) {
@@ -124,12 +124,14 @@ class _ServiceDetailState extends ConsumerState<ServiceDetailScreen> {
     }
 
     final services = repo.servicesFor(widget.appliance);
-    // Pre-select the most-booked service once, on first load only — not
+    // Pre-select the first service once per appliance — not
     // "whenever nothing's selected", or removing the last pick (allowed
     // below) would just get silently re-added on the next rebuild.
-    if (!_seeded) {
-      _selectedIds.add(services.first.id);
-      _seeded = true;
+    if (_seededAppliance != widget.appliance) {
+      _selectedIds
+        ..clear()
+        ..add(services.first.id);
+      _seededAppliance = widget.appliance;
     }
     final selected = [for (final s in services) if (_selectedIds.contains(s.id)) s];
     final selectedTotalPaise = selected.fold<int>(0, (sum, s) => sum + s.pricePaise);

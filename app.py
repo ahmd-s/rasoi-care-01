@@ -2827,7 +2827,10 @@ def list_services():
     sql = SERVICE_SELECT
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY services.name"
+    sql += (
+        " ORDER BY CASE WHEN services.id = 'svc_chimney_steam_deep_clean' "
+        "THEN 0 ELSE 1 END, services.name"
+    )
 
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()

@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- SplashScreen is hardcoded pine regardless of theme, so the native
-         splash matches in both modes. -->
-    <color name="launch_background">#FF17493C</color>
+    <color name="launch_background">#FFFFFFFF</color>
 </resources>
