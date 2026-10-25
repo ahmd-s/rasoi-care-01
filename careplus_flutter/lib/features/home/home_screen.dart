@@ -117,12 +117,15 @@ class HomeScreen extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: GridView.count(
-                      crossAxisCount: 4,
+                      // Three roomy tiles per row are easier to scan and tap
+                      // on a phone, matching the service discovery pattern in
+                      // the client's Urban Company reference.
+                      crossAxisCount: 3,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 0.82,
+                      mainAxisSpacing: 14,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 1.02,
                       children: [
                         for (final a in Appliance.values)
                           _CategoryTile(
@@ -279,41 +282,43 @@ class _CategoryTile extends StatelessWidget {
   Widget build(BuildContext context) => Pressable(
         onTap: onTap,
         scale: 0.94,
-        child: Container(
-          decoration: BoxDecoration(
-            color: context.scheme.surface,
-            borderRadius: Radii.rMd,
-            border: Border.all(color: context.care.hairline),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
+        child: Column(
+          children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: context.scheme.primaryContainer,
+                  color: context.scheme.surface,
+                  borderRadius: Radii.rMd,
+                  border: Border.all(color: context.care.hairline),
                 ),
-                child: ApplianceIllustration(
-                    appliance: appliance, size: 24, color: context.scheme.primary),
-              ),
-              const SizedBox(height: 9),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(_short(context, appliance),
-                      maxLines: 1,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 11, fontWeight: FontWeight.w600, height: 1.2)),
+                child: Container(
+                  width: 54,
+                  height: 54,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: context.scheme.primaryContainer,
+                  ),
+                  child: ApplianceIllustration(
+                      appliance: appliance, size: 30, color: context.scheme.primary),
                 ),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 7),
+            SizedBox(
+              height: 30,
+              child: Center(
+                child: Text(_short(context, appliance),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 11.5, fontWeight: FontWeight.w600, height: 1.15)),
+              ),
+            ),
+          ],
         ),
       );
 

@@ -29,7 +29,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    Timer(const Duration(milliseconds: 1600), () async {
+    // Keep the branded splash visible long enough for a clean handoff, but
+    // avoid an artificial pause after Flutter is already ready.
+    Timer(const Duration(milliseconds: 450), () async {
       if (!mounted) return;
       // Already signed in from a previous session (Firebase persists this
       // across app restarts) — skip straight past onboarding/login instead
