@@ -11,12 +11,39 @@ import '../../l10n/l10n_extensions.dart';
 import '../../state/providers.dart';
 
 // ============================================================ ALL SERVICES
-class CatalogScreen extends ConsumerWidget {
+class CatalogScreen extends ConsumerStatefulWidget {
   const CatalogScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CatalogScreen> createState() => _CatalogScreenState();
+}
+
+class _CatalogScreenState extends ConsumerState<CatalogScreen> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final t = context.l10n;
+    final repo = ref.watch(repositoryProvider);
+    final terms = _query.toLowerCase().split(RegExp(r'\s+')).where((x) => x.isNotEmpty);
+    final appliances = Appliance.values.where((a) {
+      if (terms.isEmpty) return true;
+      final index = [
+        a.label,
+        _blurb(a, t),
+        ...repo.servicesFor(a).map((service) => service.title),
+      ].join(' ').toLowerCase();
+      // Any matching word keeps search forgiving for symptom phrases such as
+      // “chimney not sucking smoke”, while still narrowing the category list.
+      return terms.any(index.contains);
+    }).toList(growable: false);
     return Scaffold(
       appBar: AppBar(
         title: Text(t.catalogAllServicesTitle),
@@ -30,42 +57,76 @@ class CatalogScreen extends ConsumerWidget {
             CareCard(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: TextField(
+                controller: _searchController,
+                autofocus: GoRouterState.of(context).uri.queryParameters['focus'] == '1',
+                textInputAction: TextInputAction.search,
+                onChanged: (value) => setState(() => _query = value.trim()),
                 decoration: InputDecoration(
                   border: InputBorder.none,
                   isDense: true,
                   hintText: t.catalogSearchHint,
                   hintStyle: context.type.bodyMedium,
                   prefixIcon: Icon(Icons.search, color: context.care.inkFaint, size: 20),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: t.catalogClearSearch,
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
                 ),
               ),
             ),
             const SizedBox(height: 18),
-            Eyebrow(t.catalogCategoriesCount(Appliance.values.length)),
-            const SizedBox(height: 12),
-            Stagger(
-              children: [
-                for (final a in Appliance.values)
-                  CareCard(
-                    onTap: () => context.push('/services/${a.name}'),
-                    child: Row(children: [
-                      Blob(a.glyph, glyph: true),
-                      const SizedBox(width: 13),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: const Cubic(.22, 1, .36, 1),
+              child: appliances.isEmpty
+                  ? Padding(
+                      key: ValueKey('empty-$_query'),
+                      padding: const EdgeInsets.symmetric(vertical: 36),
+                      child: Center(
+                        child: Text(t.catalogNoSearchResults,
+                            textAlign: TextAlign.center,
+                            style: context.type.bodyMedium),
+                      ),
+                    )
+                  : Column(
+                      key: ValueKey('results-$_query'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Eyebrow(t.catalogCategoriesCount(appliances.length)),
+                        const SizedBox(height: 12),
+                        Stagger(
                           children: [
-                            Text(a.label,
-                                style: const TextStyle(
-                                    fontSize: 14, fontWeight: FontWeight.w700)),
-                            const SizedBox(height: 3),
-                            Text(_blurb(a, t), style: context.type.bodySmall),
+                            for (final a in appliances)
+                              CareCard(
+                                onTap: () => context.push('/services/${a.name}'),
+                                child: Row(children: [
+                                  Blob(a.glyph, glyph: true),
+                                  const SizedBox(width: 13),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(a.label,
+                                            style: const TextStyle(
+                                                fontSize: 14, fontWeight: FontWeight.w700)),
+                                        const SizedBox(height: 3),
+                                        Text(_blurb(a, t), style: context.type.bodySmall),
+                                      ],
+                                    ),
+                                  ),
+                                  _fromPrice(context, ref, a, t),
+                                ]),
+                              ),
                           ],
                         ),
-                      ),
-                      _fromPrice(context, ref, a, t),
-                    ]),
-                  ),
-              ],
+                      ],
+                    ),
             ),
           ],
         ),

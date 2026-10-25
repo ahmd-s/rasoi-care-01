@@ -217,6 +217,8 @@
 
   "catalogAllServicesTitle": "All services",
   "catalogSearchHint": "Search appliance, brand or symptom",
+  "catalogClearSearch": "Clear search",
+  "catalogNoSearchResults": "No matching services. Try another appliance or service name.",
   "catalogCategoriesCount": "{count} appliance categories",
   "@catalogCategoriesCount": {"placeholders": {"count": {"type": "int"}}},
   "catalogComingSoon": "Coming soon",

@@ -197,6 +197,8 @@
 
   "catalogAllServicesTitle": "सर्व सेवा",
   "catalogSearchHint": "उपकरण, ब्रँड किंवा समस्या शोधा",
+  "catalogClearSearch": "शोध साफ करा",
+  "catalogNoSearchResults": "जुळणारी सेवा सापडली नाही. दुसरे उपकरण किंवा सेवा नाव वापरून पाहा.",
   "catalogCategoriesCount": "{count} उपकरण श्रेणी",
   "catalogComingSoon": "लवकरच येत आहे",
   "catalogFromPriceEyebrow": "पासून",

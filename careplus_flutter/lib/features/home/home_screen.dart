@@ -90,7 +90,7 @@ class HomeScreen extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: CareCard(
-                      onTap: () => context.go('/services'),
+                      onTap: () => context.go('/services?focus=1'),
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       child: Row(children: [
                         Icon(Icons.search, color: context.care.inkFaint, size: 20),

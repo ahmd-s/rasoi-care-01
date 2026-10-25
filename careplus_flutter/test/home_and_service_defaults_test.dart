@@ -26,6 +26,27 @@ void _bigScreen(WidgetTester t) {
 }
 
 void main() {
+  testWidgets('catalogue search filters by appliance and service name', (t) async {
+    t.view.physicalSize = const Size(393, 852);
+    t.view.devicePixelRatio = 1.0;
+    addTearDown(t.view.resetPhysicalSize);
+    final router = GoRouter(routes: [
+      GoRoute(path: '/', builder: (_, __) => const CatalogScreen()),
+    ]);
+    await t.pumpWidget(_app(router));
+    await t.pumpAndSettle();
+
+    await t.enterText(find.byType(TextField), 'steam');
+    await t.pumpAndSettle();
+    expect(find.text(Appliance.chimney.label), findsOneWidget);
+    expect(find.text(Appliance.hob.label), findsNothing);
+
+    await t.enterText(find.byType(TextField), 'no-such-appliance');
+    await t.pumpAndSettle();
+    expect(find.text('No matching services. Try another appliance or service name.'),
+        findsOneWidget);
+  });
+
   testWidgets('catalogue "From" price is the category minimum, not an index', (t) async {
     _bigScreen(t);
     final router = GoRouter(routes: [

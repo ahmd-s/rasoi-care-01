@@ -197,6 +197,8 @@
 
   "catalogAllServicesTitle": "सभी सेवाएं",
   "catalogSearchHint": "उपकरण, ब्रांड या समस्या खोजें",
+  "catalogClearSearch": "खोज साफ़ करें",
+  "catalogNoSearchResults": "कोई मेल खाती सेवा नहीं मिली। कोई अन्य उपकरण या सेवा नाम आज़माएँ।",
   "catalogCategoriesCount": "{count} उपकरण श्रेणियां",
   "catalogComingSoon": "जल्द आ रहा है",
   "catalogFromPriceEyebrow": "से",
