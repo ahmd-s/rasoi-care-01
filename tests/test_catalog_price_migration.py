@@ -68,3 +68,22 @@ def test_chimney_list_puts_steam_first(client):
     rows = client.get("/api/services?appliance=app_chimney").get_json()
     assert rows[0]["name"] == "Steam deep clean"
     assert any(r["name"].startswith("Deep clean") and r["price"] == 1699 for r in rows)
+
+
+def test_customer_app_prices_match_server_catalogue(client):
+    """Every service the Customer app lists (MockRepository) must carry the
+    same price on the server, or cart/booking price checks would disagree."""
+    import pathlib
+    import re
+    src = pathlib.Path(__file__).resolve().parent.parent / "careplus_flutter/lib/data/mock_repository.dart"
+    text = src.read_text()
+    pairs = re.findall(r"id: '(svc_[a-z0-9_]+)'.*?pricePaise: (\d+),", text, flags=re.S)
+    assert len(pairs) == text.count("id: 'svc_")
+    conn = database.get_db()
+    try:
+        for sid, paise in pairs:
+            row = conn.execute("SELECT price FROM services WHERE id = ?", (sid,)).fetchone()
+            assert row is not None, f"{sid} missing on server"
+            assert row["price"] * 100 == int(paise), f"{sid}: app {paise} vs server {row['price']}"
+    finally:
+        conn.close()

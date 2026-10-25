@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/launch_background" />
-    <item>
-        <bitmap android:gravity="center" android:src="@drawable/splash_logo" />
+    <!-- 160dp box so the logo is the same size on every API level and
+         matches the in-app SplashScreen and the Android 12+ splash icon. -->
+    <item android:width="160dp" android:height="160dp" android:gravity="center">
+        <bitmap android:gravity="fill" android:src="@drawable/splash_logo" />
     </item>
 </layer-list>

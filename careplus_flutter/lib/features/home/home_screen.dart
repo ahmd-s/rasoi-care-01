@@ -105,7 +105,7 @@ class HomeScreen extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: _KitchenPassportBanner(
-                      onTap: () => context.go('/passport'),
+                      onTap: () => context.push('/passport'),
                     ),
                   ),
                   // --- categories ---
@@ -252,7 +252,7 @@ class _KitchenPassportBanner extends StatelessWidget {
                     Eyebrow(context.l10n.homePassportEyebrow,
                         color: context.scheme.secondary),
                     const SizedBox(height: 8),
-                    Text(context.l10n.passportTitle,
+                    Text(context.l10n.homePassportTitle,
                         style: CareType.display(context.scheme.onPrimary, size: 27)),
                     const SizedBox(height: 8),
                     Text(context.l10n.homePassportDescription,

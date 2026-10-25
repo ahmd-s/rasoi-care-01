@@ -191,7 +191,8 @@ class AddressDetailsScreen extends ConsumerStatefulWidget {
   ConsumerState<AddressDetailsScreen> createState() => _AddressDetailsScreenState();
 }
 
-class _AddressDetailsScreenState extends ConsumerState<AddressDetailsScreen> {
+class _AddressDetailsScreenState extends ConsumerState<AddressDetailsScreen>
+    with WidgetsBindingObserver {
   // Internal keys — never shown as-is; see _typeLabel for the real,
   // localized display text. Kept in English so _glyphByType's lookup and
   // the _type == t comparisons below stay simple and stable regardless of
@@ -216,7 +217,35 @@ class _AddressDetailsScreenState extends ConsumerState<AddressDetailsScreen> {
   bool _saveAsSeeded = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_recoverLostPhoto());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_recoverLostPhoto());
+  }
+
+  /// Android can destroy this app's activity while the camera/gallery is in
+  /// front (low memory, "don't keep activities"); the picked photo is then
+  /// delivered here instead of to the pending pickImage() call.
+  Future<void> _recoverLostPhoto() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final lost = await ImagePicker().retrieveLostData();
+      final file = lost.file;
+      if (lost.isEmpty || file == null || !mounted) return;
+      setState(() => _photo = File(file.path));
+    } catch (_) {
+      // Best effort — the person can simply pick the photo again.
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _building.dispose();
     _street.dispose();
     _pincode.dispose();
@@ -266,6 +295,10 @@ class _AddressDetailsScreenState extends ConsumerState<AddressDetailsScreen> {
     String? photoUrl;
     if (_photo != null) {
       photoUrl = await profileService.uploadAddressPhoto(_photo!, id);
+      if (photoUrl == null && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(t.addressDetailsPhotoUploadFailed)));
+      }
     }
     final address = SavedAddress(id, label, line, _glyphByType[_type]!, widget.lat, widget.lng,
         _pincode.text.trim().isEmpty ? null : _pincode.text.trim(), photoUrl);

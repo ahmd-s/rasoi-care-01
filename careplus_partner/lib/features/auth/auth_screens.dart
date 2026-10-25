@@ -82,7 +82,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: const Center(child: BrandLogo(size: 240, rounded: false)),
+      // Same white background and 160dp logo as the native splash (see
+      // launch_background.xml / values-v31), so the handoff is seamless.
+      body: const Center(child: BrandLogo(size: 160, rounded: false)),
     );
   }
 }

@@ -17,7 +17,8 @@
   "@homeLastDone": {"placeholders": {"when": {"type": "String"}}},
   "homeRebook": "Rebook",
   "homeMostBooked": "Most booked",
-  "homePassportEyebrow": "CUSTOMER KITCHEN",
+  "homePassportTitle": "Customer Kitchen Passport",
+  "homePassportEyebrow": "YOUR KITCHEN",
   "homePassportDescription": "Your appliances, service history and care recommendations.",
 
   "notificationsTitle": "Notifications",
@@ -273,6 +274,7 @@
   "addressDetailsPhotoHint": "Helps the technician recognize the entrance.",
   "addressDetailsAddPhoto": "Add a photo",
   "addressDetailsTakePhoto": "Take a photo",
+  "addressDetailsPhotoUploadFailed": "Couldn't upload the photo. Your address is saved without it.",
   "addressDetailsChooseGallery": "Choose from gallery",
   "mapPickerSearchHint": "Search for an area or landmark",
   "mapPickerUseCurrentLocation": "Use my current location",

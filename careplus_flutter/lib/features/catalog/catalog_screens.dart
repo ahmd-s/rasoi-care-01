@@ -83,7 +83,7 @@ class CatalogScreen extends ConsumerWidget {
       children: [
         Eyebrow(t.catalogFromPriceEyebrow),
         const SizedBox(height: 2),
-        Text(Money.rupees(services[1].pricePaise),
+        Text(Money.rupees(services.map((s) => s.pricePaise).reduce((a, b) => a < b ? a : b)),
             style: CareType.mono(context.scheme.onSurface, size: 14, w: FontWeight.w600)),
       ],
     );

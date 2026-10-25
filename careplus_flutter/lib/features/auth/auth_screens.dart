@@ -29,7 +29,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    Timer(const Duration(milliseconds: 2100), () async {
+    Timer(const Duration(milliseconds: 1600), () async {
       if (!mounted) return;
       // Already signed in from a previous session (Firebase persists this
       // across app restarts) — skip straight past onboarding/login instead
@@ -57,7 +57,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: const Center(child: BrandLogo(size: 240, rounded: false)),
+      // Same white background and 160dp logo as the native splash (see
+      // launch_background.xml / values-v31), so the handoff is seamless.
+      body: const Center(child: BrandLogo(size: 160, rounded: false)),
     );
   }
 }

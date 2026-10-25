@@ -16,7 +16,8 @@
   "homeLastDone": "पिछली बार {when} को किया गया",
   "homeRebook": "दोबारा बुक करें",
   "homeMostBooked": "सबसे ज्यादा बुक की गई",
-  "homePassportEyebrow": "ग्राहक किचन",
+  "homePassportTitle": "ग्राहक किचन पासपोर्ट",
+  "homePassportEyebrow": "आपका किचन",
   "homePassportDescription": "आपके उपकरण, सर्विस इतिहास और देखभाल के सुझाव।",
 
   "notificationsTitle": "सूचनाएं",
@@ -249,6 +250,7 @@
   "addressDetailsPhotoHint": "तकनीशियन को प्रवेश द्वार पहचानने में मदद करता है।",
   "addressDetailsAddPhoto": "फ़ोटो जोड़ें",
   "addressDetailsTakePhoto": "फ़ोटो लें",
+  "addressDetailsPhotoUploadFailed": "फ़ोटो अपलोड नहीं हो सकी। आपका पता फ़ोटो के बिना सेव हो गया है।",
   "addressDetailsChooseGallery": "गैलरी से चुनें",
   "mapPickerSearchHint": "किसी क्षेत्र या लैंडमार्क को खोजें",
   "mapPickerUseCurrentLocation": "मेरा वर्तमान स्थान इस्तेमाल करें",
